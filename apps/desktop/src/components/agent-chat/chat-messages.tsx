@@ -8,6 +8,7 @@ import {
 import { useSettingsStore } from "@/stores/settings-store";
 import { MarkdownRenderer } from "./markdown-renderer";
 import { ThinkingWidget, ToolWidget } from "./tool-widgets";
+import { MessageActions } from "./message-actions";
 
 const LEGACY_DOCUMENT_TOOL_NAMES = new Set([
   "inspect_resource",
@@ -245,6 +246,7 @@ export const ChatMessages: FC = () => {
         <MessageBubble
           key={idx}
           message={msg}
+          messageIndex={idx}
           toolResultMap={toolResultMap}
           isStreaming={isStreaming}
           debugEnabled={debugEnabled}
@@ -260,17 +262,19 @@ export const ChatMessages: FC = () => {
 
 const MessageBubble: FC<{
   message: AgentStreamMessage;
+  messageIndex: number;
   toolResultMap: Map<string, ContentBlock>;
   isStreaming: boolean;
   debugEnabled: boolean;
-}> = memo(({ message, toolResultMap, isStreaming, debugEnabled }) => {
+}> = memo(({ message, messageIndex, toolResultMap, isStreaming, debugEnabled }) => {
   if (message.type === "user") {
-    return <UserMessage message={message} />;
+    return <UserMessage message={message} messageIndex={messageIndex} />;
   }
   if (message.type === "assistant") {
     return (
       <AssistantMessage
         message={message}
+        messageIndex={messageIndex}
         toolResultMap={toolResultMap}
         isStreaming={isStreaming}
         debugEnabled={debugEnabled}
@@ -278,14 +282,15 @@ const MessageBubble: FC<{
     );
   }
   if (message.type === "result") {
-    return <ResultMessage message={message} />;
+    return <ResultMessage message={message} messageIndex={messageIndex} />;
   }
   return null;
 });
 
 // ─── User Message ───
 
-const UserMessage: FC<{ message: AgentStreamMessage }> = ({ message }) => {
+const UserMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> = ({ message, messageIndex }) => {
+  const [isHovering, setIsHovering] = useState(false);
   const rawContent = message.message?.content;
   const textContent = Array.isArray(rawContent)
     ? rawContent
@@ -324,7 +329,11 @@ const UserMessage: FC<{ message: AgentStreamMessage }> = ({ message }) => {
     prompt: string,
   ) => (
     <div className="flex w-full flex-col items-end py-1.5">
-      <div className="max-w-[85%] rounded-xl bg-muted px-3 py-2 text-foreground text-sm">
+      <div 
+        className="max-w-[85%] rounded-xl bg-muted px-3 py-2 text-foreground text-sm relative group"
+        onMouseEnter={() => setIsHovering(true)}
+        onMouseLeave={() => setIsHovering(false)}
+      >
         <div className="mb-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2.5 py-2">
           <div className="mb-1.5 font-medium text-red-400 text-xs">{title}</div>
           <div className="space-y-1">
@@ -344,6 +353,11 @@ const UserMessage: FC<{ message: AgentStreamMessage }> = ({ message }) => {
           </div>
         </div>
         <span className="text-muted-foreground">{prompt}</span>
+        {isHovering && (
+          <div className="absolute -bottom-10 right-0 mt-1">
+            <MessageActions message={message} messageIndex={messageIndex} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -388,7 +402,11 @@ const UserMessage: FC<{ message: AgentStreamMessage }> = ({ message }) => {
 
   return (
     <div className="flex w-full flex-col items-end py-1.5">
-      <div className="max-w-[85%] rounded-xl bg-muted px-3 py-1.5 text-foreground text-sm">
+      <div 
+        className="max-w-[85%] rounded-xl bg-muted px-3 py-1.5 text-foreground text-sm relative group"
+        onMouseEnter={() => setIsHovering(true)}
+        onMouseLeave={() => setIsHovering(false)}
+      >
         {contextLabel && (
           <span className="mb-1 inline-flex items-center rounded-md bg-background/60 px-1.5 py-0.5 font-mono text-muted-foreground text-xs">
             {contextLabel}
@@ -399,6 +417,11 @@ const UserMessage: FC<{ message: AgentStreamMessage }> = ({ message }) => {
           content={bodyText}
           className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
         />
+        {isHovering && (
+          <div className="absolute -bottom-10 right-0 mt-1">
+            <MessageActions message={message} messageIndex={messageIndex} />
+          </div>
+        )}
       </div>
     </div>
   );
@@ -408,10 +431,12 @@ const UserMessage: FC<{ message: AgentStreamMessage }> = ({ message }) => {
 
 const AssistantMessage: FC<{
   message: AgentStreamMessage;
+  messageIndex: number;
   toolResultMap: Map<string, ContentBlock>;
   isStreaming: boolean;
   debugEnabled: boolean;
-}> = ({ message, toolResultMap, isStreaming, debugEnabled }) => {
+}> = ({ message, messageIndex, toolResultMap, isStreaming, debugEnabled }) => {
+  const [isHovering, setIsHovering] = useState(false);
   const content = message.message?.content;
   if (!Array.isArray(content) || content.length === 0) return null;
 
@@ -431,7 +456,11 @@ const AssistantMessage: FC<{
   let renderedDocumentStep = false;
 
   return (
-    <div className="w-full py-1.5">
+    <div 
+      className="w-full py-1.5 relative group"
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
+    >
       <div className="px-1 text-foreground text-sm leading-relaxed">
         {content.map((block, idx) => {
           if (block.type === "thinking" && block.thinking) {
@@ -489,20 +518,30 @@ const AssistantMessage: FC<{
           return null;
         })}
       </div>
+      {isHovering && !isStreaming && (
+        <div className="absolute -bottom-10 left-0">
+          <MessageActions message={message} messageIndex={messageIndex} canRetry={true} />
+        </div>
+      )}
     </div>
   );
 };
 
 // ─── Result Message ───
 
-const ResultMessage: FC<{ message: AgentStreamMessage }> = ({ message }) => {
+const ResultMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> = ({ message, messageIndex }) => {
+  const [isHovering, setIsHovering] = useState(false);
   const isError = message.is_error || message.subtype === "error";
   const resultText = message.result;
 
   if (!resultText) return null;
 
   return (
-    <div className="w-full py-1.5">
+    <div 
+      className="w-full py-1.5 relative group"
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
+    >
       <div className="px-1 text-foreground text-sm leading-relaxed">
         {isError ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive text-sm">
@@ -518,6 +557,11 @@ const ResultMessage: FC<{ message: AgentStreamMessage }> = ({ message }) => {
       {message.cost_usd != null && (
         <div className="mt-1 px-1 text-right text-muted-foreground text-xs">
           Cost: ${message.cost_usd.toFixed(4)}
+        </div>
+      )}
+      {isHovering && (
+        <div className="absolute -bottom-10 left-0">
+          <MessageActions message={message} messageIndex={messageIndex} canRetry={false} />
         </div>
       )}
     </div>
