@@ -7,6 +7,7 @@ interface MessageActionsProps {
   message: AgentStreamMessage;
   messageIndex: number;
   canRetry?: boolean;
+  className?: string;
 }
 
 /**
@@ -44,11 +45,13 @@ export function extractMessageText(message: AgentStreamMessage): string {
 
 /**
  * MessageActions component - provides copy, edit, and retry buttons
+ * Now positioned inside the message bubble with proper opacity/hover effects
  */
 export const MessageActions: FC<MessageActionsProps> = ({
   message,
   messageIndex,
   canRetry = true,
+  className = "",
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState(extractMessageText(message));
@@ -128,17 +131,18 @@ export const MessageActions: FC<MessageActionsProps> = ({
 
   if (isEditing && message.type === "user") {
     return (
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 w-full">
         <textarea
           value={editedText}
           onChange={(e) => setEditedText(e.target.value)}
-          className="w-full max-w-[85%] rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm"
+          className="w-full rounded-lg border border-input bg-background px-3 py-2 font-mono text-sm"
           rows={Math.max(3, editedText.split("\n").length)}
+          autoFocus
         />
-        <div className="flex gap-2">
+        <div className="flex gap-2 justify-end">
           <button
             onClick={handleSaveEdit}
-            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-primary-foreground text-xs hover:bg-primary/90"
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-primary-foreground text-xs hover:bg-primary/90 transition-colors"
             title="Save and send"
           >
             <Check className="size-3" />
@@ -146,7 +150,7 @@ export const MessageActions: FC<MessageActionsProps> = ({
           </button>
           <button
             onClick={() => setIsEditing(false)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-foreground text-xs hover:bg-muted/80"
+            className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1.5 text-foreground text-xs hover:bg-muted/80 transition-colors"
             title="Cancel editing"
           >
             <X className="size-3" />
@@ -158,10 +162,10 @@ export const MessageActions: FC<MessageActionsProps> = ({
   }
 
   return (
-    <div className="flex items-center gap-1.5 rounded-md bg-background/50 px-2 py-1.5">
+    <div className={`flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${className}`}>
       <button
         onClick={handleCopy}
-        className="inline-flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+        className="inline-flex items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
         title="Copy message"
         aria-label="Copy"
       >
@@ -171,7 +175,7 @@ export const MessageActions: FC<MessageActionsProps> = ({
       {message.type === "user" && (
         <button
           onClick={handleEdit}
-          className="inline-flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          className="inline-flex items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
           title="Edit and resend message"
           aria-label="Edit"
         >
@@ -182,7 +186,7 @@ export const MessageActions: FC<MessageActionsProps> = ({
       {message.type === "assistant" && canRetry && (
         <button
           onClick={handleRetry}
-          className="inline-flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          className="inline-flex items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
           title="Regenerate response"
           aria-label="Retry"
         >

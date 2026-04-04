@@ -290,7 +290,6 @@ const MessageBubble: FC<{
 // ─── User Message ───
 
 const UserMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> = ({ message, messageIndex }) => {
-  const [isHovering, setIsHovering] = useState(false);
   const rawContent = message.message?.content;
   const textContent = Array.isArray(rawContent)
     ? rawContent
@@ -329,11 +328,7 @@ const UserMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> = (
     prompt: string,
   ) => (
     <div className="flex w-full flex-col items-end py-1.5">
-      <div 
-        className="max-w-[85%] rounded-xl bg-muted px-3 py-2 text-foreground text-sm relative group"
-        onMouseEnter={() => setIsHovering(true)}
-        onMouseLeave={() => setIsHovering(false)}
-      >
+      <div className="group max-w-[85%] rounded-xl bg-muted px-3 py-2 text-foreground text-sm relative">
         <div className="mb-2 rounded-lg border border-red-500/20 bg-red-500/10 px-2.5 py-2">
           <div className="mb-1.5 font-medium text-red-400 text-xs">{title}</div>
           <div className="space-y-1">
@@ -353,11 +348,9 @@ const UserMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> = (
           </div>
         </div>
         <span className="text-muted-foreground">{prompt}</span>
-        {isHovering && (
-          <div className="absolute -bottom-10 right-0 mt-1">
-            <MessageActions message={message} messageIndex={messageIndex} />
-          </div>
-        )}
+        <div className="absolute top-1 right-1">
+          <MessageActions message={message} messageIndex={messageIndex} />
+        </div>
       </div>
     </div>
   );
@@ -402,11 +395,7 @@ const UserMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> = (
 
   return (
     <div className="flex w-full flex-col items-end py-1.5">
-      <div 
-        className="max-w-[85%] rounded-xl bg-muted px-3 py-1.5 text-foreground text-sm relative group"
-        onMouseEnter={() => setIsHovering(true)}
-        onMouseLeave={() => setIsHovering(false)}
-      >
+      <div className="group max-w-[85%] rounded-xl bg-muted px-3 py-1.5 text-foreground text-sm relative">
         {contextLabel && (
           <span className="mb-1 inline-flex items-center rounded-md bg-background/60 px-1.5 py-0.5 font-mono text-muted-foreground text-xs">
             {contextLabel}
@@ -417,11 +406,9 @@ const UserMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> = (
           content={bodyText}
           className="prose prose-sm dark:prose-invert max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
         />
-        {isHovering && (
-          <div className="absolute -bottom-10 right-0 mt-1">
-            <MessageActions message={message} messageIndex={messageIndex} />
-          </div>
-        )}
+        <div className="absolute top-1 right-1">
+          <MessageActions message={message} messageIndex={messageIndex} />
+        </div>
       </div>
     </div>
   );
@@ -436,7 +423,6 @@ const AssistantMessage: FC<{
   isStreaming: boolean;
   debugEnabled: boolean;
 }> = ({ message, messageIndex, toolResultMap, isStreaming, debugEnabled }) => {
-  const [isHovering, setIsHovering] = useState(false);
   const content = message.message?.content;
   if (!Array.isArray(content) || content.length === 0) return null;
 
@@ -456,12 +442,8 @@ const AssistantMessage: FC<{
   let renderedDocumentStep = false;
 
   return (
-    <div 
-      className="w-full py-1.5 relative group"
-      onMouseEnter={() => setIsHovering(true)}
-      onMouseLeave={() => setIsHovering(false)}
-    >
-      <div className="px-1 text-foreground text-sm leading-relaxed">
+    <div className="w-full py-1.5 group">
+      <div className="px-1 text-foreground text-sm leading-relaxed relative">
         {content.map((block, idx) => {
           if (block.type === "thinking" && block.thinking) {
             return (
@@ -517,12 +499,12 @@ const AssistantMessage: FC<{
           }
           return null;
         })}
+        {!isStreaming && (
+          <div className="absolute -top-7 right-0 ml-2">
+            <MessageActions message={message} messageIndex={messageIndex} canRetry={true} />
+          </div>
+        )}
       </div>
-      {isHovering && !isStreaming && (
-        <div className="absolute -bottom-10 left-0">
-          <MessageActions message={message} messageIndex={messageIndex} canRetry={true} />
-        </div>
-      )}
     </div>
   );
 };
@@ -530,19 +512,14 @@ const AssistantMessage: FC<{
 // ─── Result Message ───
 
 const ResultMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> = ({ message, messageIndex }) => {
-  const [isHovering, setIsHovering] = useState(false);
   const isError = message.is_error || message.subtype === "error";
   const resultText = message.result;
 
   if (!resultText) return null;
 
   return (
-    <div 
-      className="w-full py-1.5 relative group"
-      onMouseEnter={() => setIsHovering(true)}
-      onMouseLeave={() => setIsHovering(false)}
-    >
-      <div className="px-1 text-foreground text-sm leading-relaxed">
+    <div className="w-full py-1.5 group">
+      <div className="px-1 text-foreground text-sm leading-relaxed relative">
         {isError ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive text-sm">
             {resultText}
@@ -553,15 +530,13 @@ const ResultMessage: FC<{ message: AgentStreamMessage; messageIndex: number }> =
             className="prose prose-sm dark:prose-invert max-w-none"
           />
         )}
+        <div className="absolute -top-7 right-0 ml-2">
+          <MessageActions message={message} messageIndex={messageIndex} canRetry={false} />
+        </div>
       </div>
       {message.cost_usd != null && (
         <div className="mt-1 px-1 text-right text-muted-foreground text-xs">
           Cost: ${message.cost_usd.toFixed(4)}
-        </div>
-      )}
-      {isHovering && (
-        <div className="absolute -bottom-10 left-0">
-          <MessageActions message={message} messageIndex={messageIndex} canRetry={false} />
         </div>
       )}
     </div>
