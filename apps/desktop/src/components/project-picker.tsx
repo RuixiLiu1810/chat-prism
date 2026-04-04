@@ -1,0 +1,508 @@
+import { useCallback, useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import { listen } from "@tauri-apps/api/event";
+import { open } from "@tauri-apps/plugin-dialog";
+import {
+  FolderOpenIcon,
+  FolderPlusIcon,
+  ClockIcon,
+  XIcon,
+  FileTextIcon,
+  SparklesIcon,
+  CheckCircle2Icon,
+  CircleIcon,
+  DownloadIcon,
+  Loader2Icon,
+  RefreshCwIcon,
+  ArrowUpCircleIcon,
+} from "lucide-react";
+import { useProjectStore } from "@/stores/project-store";
+import { useDocumentStore } from "@/stores/document-store";
+import { useUvSetupStore } from "@/stores/uv-setup-store";
+import { useUpdater } from "@/hooks/use-updater";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { ProjectWizard, type CreationMode } from "./project-wizard";
+import { cn } from "@/lib/utils";
+
+interface AgentRuntimeStatus {
+  provider: string;
+  displayName: string;
+  ready: boolean;
+  mode: string;
+  message: string;
+  defaultModel?: string | null;
+}
+
+export function ProjectPicker() {
+  const [showModeDialog, setShowModeDialog] = useState(false);
+  const [wizardMode, setWizardMode] = useState<CreationMode | null>(null);
+  const [appVersion, setAppVersion] = useState("");
+  const [agentStatus, setAgentStatus] = useState<AgentRuntimeStatus | null>(
+    null,
+  );
+  const { status: updateStatus, checkForUpdate, installUpdate } = useUpdater();
+
+  const recentProjects = useProjectStore((s) => s.recentProjects);
+  const addRecentProject = useProjectStore((s) => s.addRecentProject);
+  const removeRecentProject = useProjectStore((s) => s.removeRecentProject);
+  const openProject = useDocumentStore((s) => s.openProject);
+
+  useEffect(() => {
+    invoke<AgentRuntimeStatus>("agent_check_status")
+      .then(setAgentStatus)
+      .catch(() => setAgentStatus(null));
+    getVersion().then(setAppVersion);
+  }, []);
+
+  const handleOpenFolder = async () => {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: "Open Project Folder",
+    });
+    if (selected) {
+      addRecentProject(selected);
+      await openProject(selected);
+    }
+  };
+
+  const handleOpenRecent = async (path: string) => {
+    addRecentProject(path);
+    await openProject(path);
+  };
+
+  const handleSelectMode = (mode: CreationMode) => {
+    setShowModeDialog(false);
+    setWizardMode(mode);
+  };
+
+  if (wizardMode) {
+    return (
+      <ProjectWizard mode={wizardMode} onBack={() => setWizardMode(null)} />
+    );
+  }
+
+  return (
+    <div className="flex h-full items-center justify-center bg-background">
+      <div className="flex w-full max-w-md flex-col items-center gap-8 px-8">
+        <div className="flex flex-col items-center gap-2">
+          <img src="/icon-192.png" alt="ClaudePrism" className="size-16" />
+          <h1 className="font-bold text-2xl">ClaudePrism</h1>
+          <VersionBadge
+            version={appVersion}
+            updateStatus={updateStatus}
+            onCheck={checkForUpdate}
+            onInstall={installUpdate}
+          />
+          <p className="text-center text-muted-foreground text-sm">
+            AI-powered academic writing workspace
+          </p>
+        </div>
+
+        <EnvironmentStatus agentStatus={agentStatus} />
+
+        <div className="flex w-full gap-3">
+          <Button
+            onClick={() => setShowModeDialog(true)}
+            size="lg"
+            variant="outline"
+            className="flex-1 gap-2"
+          >
+            <FolderPlusIcon className="size-5" />
+            New Project
+          </Button>
+          <Button
+            onClick={handleOpenFolder}
+            size="lg"
+            className="flex-1 gap-2"
+          >
+            <FolderOpenIcon className="size-5" />
+            Open Folder
+          </Button>
+        </div>
+
+        {recentProjects.length > 0 && (
+          <div className="w-full">
+            <div className="mb-3 flex items-center gap-2 text-muted-foreground text-sm">
+              <ClockIcon className="size-4" />
+              <span>Recent Projects</span>
+            </div>
+            <div className="max-h-64 space-y-1 overflow-y-auto">
+              {recentProjects.map((project) => (
+                <div
+                  key={project.path}
+                  className="group flex items-center gap-2 rounded-md px-3 py-2 transition-colors hover:bg-muted"
+                >
+                  <button
+                    className="flex flex-1 flex-col items-start overflow-hidden text-left"
+                    onClick={() => handleOpenRecent(project.path)}
+                  >
+                    <span className="truncate font-medium text-sm">
+                      {project.name}
+                    </span>
+                    <span className="truncate text-muted-foreground text-xs">
+                      {project.path}
+                    </span>
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 shrink-0 opacity-0 group-hover:opacity-100"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeRecentProject(project.path);
+                    }}
+                  >
+                    <XIcon className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* New Project mode selection dialog */}
+      <Dialog open={showModeDialog} onOpenChange={setShowModeDialog}>
+        <DialogContent showCloseButton={false} className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create New Project</DialogTitle>
+            <DialogDescription>How would you like to start?</DialogDescription>
+          </DialogHeader>
+          <div className="flex gap-3 pt-2">
+            <button
+              onClick={() => handleSelectMode("template")}
+              className="group flex flex-1 flex-col items-center gap-3 rounded-xl border border-foreground/10 p-5 text-center transition-all hover:border-foreground/20 hover:bg-muted/50"
+            >
+              <div className="flex size-12 items-center justify-center rounded-lg bg-muted/50 transition-colors group-hover:bg-muted">
+                <SparklesIcon className="size-6 text-muted-foreground transition-colors group-hover:text-foreground" />
+              </div>
+              <div>
+                <div className="font-semibold text-sm">Guided Setup</div>
+                <p className="mt-1 text-muted-foreground text-xs leading-relaxed">
+                  Pick a template and let AI help you get started
+                </p>
+              </div>
+              <span className="rounded-full bg-foreground/8 px-2 py-0.5 font-medium text-[10px] text-muted-foreground">
+                Recommended
+              </span>
+            </button>
+
+            <button
+              onClick={() => handleSelectMode("scratch")}
+              className="group flex flex-1 flex-col items-center gap-3 rounded-xl border border-border p-5 text-center transition-all hover:border-foreground/20 hover:bg-muted/50"
+            >
+              <div className="flex size-12 items-center justify-center rounded-lg bg-muted/50 transition-colors group-hover:bg-muted">
+                <FileTextIcon className="size-6 text-muted-foreground transition-colors group-hover:text-foreground" />
+              </div>
+              <div>
+                <div className="font-semibold text-sm">Blank Document</div>
+                <p className="mt-1 text-muted-foreground text-xs leading-relaxed">
+                  Start with an empty LaTeX file
+                </p>
+              </div>
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ─── Environment Status ───
+
+interface SkillsStatus {
+  installed: boolean;
+  skill_count: number;
+  location: string;
+}
+
+function EnvironmentStatus({
+  agentStatus,
+}: {
+  agentStatus: AgentRuntimeStatus | null;
+}) {
+  const uvStatus = useUvSetupStore((s) => s.status);
+  const uvVersion = useUvSetupStore((s) => s.version);
+  const uvInstalling = useUvSetupStore((s) => s.isInstalling);
+  const checkUv = useUvSetupStore((s) => s.checkStatus);
+  const installUv = useUvSetupStore((s) => s.install);
+  const _finishUvInstall = useUvSetupStore((s) => s._finishInstall);
+
+  const [skillsStatus, setSkillsStatus] = useState<SkillsStatus | null>(null);
+  const [skillsInstalling, _setSkillsInstalling] = useState(false);
+  const [showSkillsOnboarding, setShowSkillsOnboarding] = useState(false);
+
+  const checkSkills = useCallback(async () => {
+    try {
+      const gs = await invoke<SkillsStatus>("check_skills_installed", {
+        projectPath: null,
+      });
+      setSkillsStatus(gs);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    checkUv();
+    checkSkills();
+  }, [checkUv, checkSkills]);
+
+  // Listen for uv install completion
+  useEffect(() => {
+    const unlisten = listen<boolean>("uv-install-complete", (event) => {
+      _finishUvInstall(event.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [_finishUvInstall]);
+
+  // Lazy load skills onboarding
+  const [OnboardingComponent, setOnboardingComponent] =
+    useState<React.ComponentType<{
+      onClose: () => void;
+    }> | null>(null);
+
+  useEffect(() => {
+    if (showSkillsOnboarding && !OnboardingComponent) {
+      import(
+        "@/components/scientific-skills/scientific-skills-onboarding"
+      ).then((mod) =>
+        setOnboardingComponent(() => mod.ScientificSkillsOnboarding),
+      );
+    }
+  }, [showSkillsOnboarding, OnboardingComponent]);
+
+  return (
+    <>
+      <div className="flex w-full flex-col gap-2 rounded-xl border border-border bg-muted/30 px-4 py-3">
+        <StatusRow
+          ok={agentStatus?.ready ?? false}
+          label="AI Runtime"
+          detail={
+            agentStatus
+              ? `${agentStatus.displayName} · ${agentStatus.message}`
+              : "Checking..."
+          }
+        />
+
+        {/* Python (uv) */}
+        <StatusRow
+          ok={uvStatus === "ready"}
+          label="Python (uv)"
+          detail={
+            uvInstalling
+              ? "Installing..."
+              : uvStatus === "ready"
+                ? (uvVersion ?? "Installed")
+                : uvStatus === "checking"
+                  ? "Checking..."
+                  : "Not installed"
+          }
+          action={
+            uvStatus === "not-installed" && !uvInstalling
+              ? { label: "Install", onClick: installUv }
+              : uvInstalling
+                ? { label: "Installing...", loading: true }
+                : undefined
+          }
+        />
+
+        {/* Scientific Skills */}
+        <StatusRow
+          ok={!!skillsStatus?.installed}
+          label="Scientific Skills"
+          detail={
+            skillsInstalling
+              ? "Installing..."
+              : skillsStatus?.installed
+                ? `${skillsStatus.skill_count} skills`
+                : "Not installed"
+          }
+          action={
+            !skillsStatus?.installed && !skillsInstalling
+              ? {
+                  label: "Install",
+                  onClick: () => setShowSkillsOnboarding(true),
+                }
+              : undefined
+          }
+        />
+      </div>
+
+      {showSkillsOnboarding && OnboardingComponent && (
+        <OnboardingComponent
+          onClose={() => {
+            setShowSkillsOnboarding(false);
+            checkSkills();
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+function StatusRow({
+  ok,
+  label,
+  detail,
+  action,
+}: {
+  ok: boolean;
+  label: string;
+  detail: string;
+  action?: { label: string; onClick?: () => void; loading?: boolean };
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2.5">
+      {ok ? (
+        <CheckCircle2Icon className="size-3.5 shrink-0 text-foreground" />
+      ) : (
+        <CircleIcon className="size-3.5 shrink-0 text-muted-foreground/40" />
+      )}
+      <span
+        className={cn(
+          "shrink-0 text-sm",
+          ok ? "text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {label}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-muted-foreground text-xs">
+        {detail}
+      </span>
+      {action && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 shrink-0 px-2 text-xs"
+          onClick={action.onClick}
+          disabled={action.loading}
+        >
+          {action.loading ? (
+            <Loader2Icon className="mr-1 size-3 animate-spin" />
+          ) : (
+            <DownloadIcon className="mr-1 size-3" />
+          )}
+          {action.label}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+// ─── Version Badge with Update Status ───
+
+function VersionBadge({
+  version,
+  updateStatus,
+  onCheck,
+  onInstall,
+}: {
+  version: string;
+  updateStatus: import("@/hooks/use-updater").UpdateStatus;
+  onCheck: () => void;
+  onInstall: () => void;
+}) {
+  if (!version) return null;
+
+  switch (updateStatus.state) {
+    case "available":
+      return (
+        <button
+          onClick={onInstall}
+          className="flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-primary text-xs transition-colors hover:bg-primary/20"
+        >
+          <ArrowUpCircleIcon className="size-3.5" />v{updateStatus.version}{" "}
+          available — click to update
+        </button>
+      );
+
+    case "downloading":
+      return (
+        <div className="flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-muted-foreground text-xs">
+          <Loader2Icon className="size-3.5 animate-spin" />
+          Downloading... {updateStatus.percent}%
+        </div>
+      );
+
+    case "installing":
+      return (
+        <div className="flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-muted-foreground text-xs">
+          <Loader2Icon className="size-3.5 animate-spin" />
+          Installing...
+        </div>
+      );
+
+    case "ready":
+      return (
+        <div className="flex items-center gap-1.5 rounded-full bg-green-500/10 px-3 py-1 text-green-600 text-xs">
+          <CheckCircle2Icon className="size-3.5" />
+          Update complete — restarting...
+        </div>
+      );
+
+    case "checking":
+      return (
+        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+          <Loader2Icon className="size-3 animate-spin" />v{version} — checking
+          for updates...
+        </div>
+      );
+
+    case "error":
+      return (
+        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+          <span>v{version}</span>
+          <span className="mx-0.5">·</span>
+          <button
+            onClick={onCheck}
+            className="flex items-center gap-1 transition-colors hover:text-foreground"
+          >
+            <RefreshCwIcon className="size-3" />
+            Retry
+          </button>
+        </div>
+      );
+
+    case "up-to-date":
+      return (
+        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+          <span>v{version}</span>
+          <span className="mx-0.5">·</span>
+          <button
+            onClick={onCheck}
+            className="flex items-center gap-1 transition-colors hover:text-foreground"
+          >
+            <CheckCircle2Icon className="size-3 text-green-500" />
+            Up to date
+          </button>
+        </div>
+      );
+
+    default:
+      return (
+        <div className="flex items-center gap-1.5 text-muted-foreground text-xs">
+          <span>v{version}</span>
+          <span className="mx-0.5">·</span>
+          <button
+            onClick={onCheck}
+            className="flex items-center gap-1 transition-colors hover:text-foreground"
+          >
+            <RefreshCwIcon className="size-3" />
+            Check for updates
+          </button>
+        </div>
+      );
+  }
+}

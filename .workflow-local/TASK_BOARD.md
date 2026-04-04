@@ -1,0 +1,273 @@
+# 任务看板
+
+## In Progress
+- [ ] Phase 8（Workflow 收敛）：S0-S2 已落地，进入 S3 可选评估阶段（S4 继续 Parked）
+- [ ] Phase 10（Agent UX Hardening）：收口 tool UX / cancel / 状态机可观测性
+- [ ] Phase 11（Tool Governance）：从 `write_file` / `run_shell_command` 的最小审批流开始推进
+- [x] Phase 13：选择性吸收 `claude-code-fork-main` 的高价值能力，不做整树并入
+- [x] Phase 13：按 `CLAUDE_CODE_FORK_VALUE_MAP.md` 的价值分档推进（优先 message adapter / permission runtime / review-first diff）
+- [ ] Chat Completions Agent 回归：按 `CHAT_COMPLETIONS_AGENT_REGRESSION_CHECKLIST.md` 持续验证选区精细编辑 / approval-resume / review-first diff / session continuity
+- [ ] Post-Phase-13：基于外部 Claude Code docs 参考，推进轻量 session memory / 权限规则来源 / 文档摄取优先级，而不是继续找“隐藏 skill”补洞
+- [x] Phase 14（Document Read Flow Simplification）：首轮已落地 canonical `read_document` 单入口（legacy handlers 保留兼容）
+- [x] Tool System Consolidation：`Resource-Driven Tool Platform` 首轮主线完成（T1-T4 first pass 已落地，后续进入 `T4+ OCR` fidelity 升级）
+- [x] Document Ingestion Alignment：首轮 page-aware evidence surfacing 已落地（prompt 现按 `document -> page/paragraph -> snippet` 组织证据，而不是继续喂扁平 matches）
+- [x] Attachment Mention Fallback：即使用户没有从 `@` 下拉中选中文件、只是直接键入 `@attachments/...`，发送时也会自动解析为 attachment context 并走 ingestion/evidence 主路径
+- [x] Attachment Mention Fallback（补强）：当 `@attachments/...` 不在当前文件列表中时，发送前仍会按 `projectRoot + relativePath` 尝试解析真实文件并自动构建 ingestion context（避免“inspect 可跑但 artifact 不存在”的断链）
+- [x] Document Tool Stability（补丁）：修复 `process_utils::command_available()` 误将“命令存在但 `--version` 非零”的工具判定为不可用（典型影响：`pdftotext`），避免 document fallback 被误跳过
+- [x] Approval Suspension Semantics：审批请求现在会把当前 turn 明确收成 `suspended`，而不是继续把 tool feedback 回喂模型并跑完整轮
+
+## Next
+- [x] Model-Facing Runtime Repair / Phase 1 Bundle：重写 `AGENT_BASE_INSTRUCTIONS`，补上下文标记说明（不是继续做软性 prompt 提示，而是给弱模型明确的任务/工具决策框架）
+- [x] Model-Facing Runtime Repair / Phase 1 Bundle：清洁化 tool feedback，禁止把内部控制 JSON 原样作为模型可见 tool message 回传
+- [x] Model-Facing Runtime Repair / Phase 1 Bundle：按 `task_kind` 下发 task-aware `tool_choice`
+- [x] Model-Facing Runtime Repair / Phase 1 Bundle：为 `selection_edit` 增加 runtime 级 hard guard，禁止默认落到 `write_file`
+- [x] Model-Facing Runtime Repair / Phase 2 Bundle：修复 streamed tool-call id/name 合并逻辑
+- [x] Model-Facing Runtime Repair / Phase 2 Bundle：丰富工具错误上下文与工具描述边界，提升模型自我纠错能力
+- [x] Model-Facing Runtime Repair / Phase 2 Bundle：提高 edit path 的输出/token budget
+- [x] Model-Facing Runtime Repair / Phase 3 Bundle：修复 transcript/history 中工具上下文丢失
+- [x] Model-Facing Runtime Repair / Phase 3 Bundle：补中文/多语言 fallback 任务检测（仅作 fallback，不回退成主路由）
+- [x] Model-Facing Runtime Repair / Phase 3 Bundle：按任务类型设置 turn loop 上限
+- [x] Structural Runtime Gap / P0：为 `selection_edit` 加 runtime 级 hard guard，禁止默认落到 `write_file`
+- [x] Sprint 2：引入 `TurnBudget`，把 `max_rounds / max_output_tokens / consumed_tokens / shared abort signal` 收到统一执行上下文
+- [x] Sprint 2：把 cancel/abort 语义继续传播到 tool execution，而不只停在 stream 层
+- [x] Sprint 2：把 `current_objective / current_target / last_tool_activity` 注入模型上下文
+- [x] Sprint 3：pending turn 序列化到本地文件，重启后可恢复
+- [x] Sprint 3：approval TTL / stale cleanup
+- [x] Sprint 3：将 `ToolApprovalState` 演进为 `ToolApprovalRecord { decision, source, granted_at, expires_at }`
+- [x] Sprint 4：只读工具并发执行，写/变更工具保持串行
+- [x] Sprint 4：为 chat-completions provider 增加 tool schema adapter（MiniMax first）
+- [x] Sprint 4：增加轻量本地 telemetry / structured execution logs
+- [x] Structural Runtime Gap / P0：工具执行升级为“只读并发、写操作串行”
+- [x] Structural Runtime Gap / P0：将当前 task-aware round limit 进一步升级为真正的 round/token safeguard（`TurnBudget`），而不是只停留在替换固定 `0..6`
+- [x] Structural Runtime Gap / P1：pending turn 持久化 + TTL / stale cleanup
+- [x] Structural Runtime Gap / P1：provider tool schema adapter（不要再把单一 OpenAI-shaped schema 发给所有 provider）
+- [ ] Structural Runtime Gap / P2：history 强类型化 + reasoning buffer 解耦
+- [x] Phase 14 / P14-A：新增 canonical `read_document`，legacy document tools 保留兼容但从默认 tool spec 下线
+- [x] Phase 14 / P14-B：policy/prompt/tool-feedback 文案收敛到 `read_document` 单入口
+- [x] Phase 14 / P14-C：tool widget 收敛为统一“Read document”语义（legacy 仍可显示）
+- [x] Phase 14 / P14-D：补齐首轮回归测试（tool exposure）并完成 Rust+TS 构建验证
+- [x] Phase 3（Prompt 与路由降噪）：文档问答在统一 loop 内走专用文档策略（有证据 `tool_choice=none`；无证据二进制附件 `tool_choice=required`），并完成 prompt 去重精简
+- [x] Post-Phase-13 / P1：将 `current_objective / current_target / last_tool_activity` 从纯 UI work-state 提升到 selective recall，作为轻量 session memory 注入模型上下文
+- [ ] Post-Phase-13 / P1：在现有 `ToolApprovalRecord` 之上继续补 rule provenance / denial tracking，不把权限系统停留在“可持久化状态”层
+- [x] Post-Phase-13 / P1：为富文档附件补 ingestion-first 主线（PDF/DOCX excerpt/search），不要继续把“有没有 skill”当成主要解法
+- [x] Post-Phase-13 / P2：将 PDF/DOCX ingestion 从 excerpt/search 提升到 page-aware evidence surfacing 首轮，对齐 Claude 的“文档是一等输入，不是命令行提取结果”心智
+- [x] Tool System Consolidation / T1：收窄 `read_file` 语义（首轮已 fail-fast `.pdf/.docx`；中期仍可演进为 `read_text_file`），不再把文档格式塞进通用文本读取工具
+- [x] Tool System Consolidation / T1：冻结产品规则——`run_shell_command` 不再作为 PDF/DOCX/attachment extraction 的默认兜底
+- [x] Tool System Consolidation / T2：新增 document tool family（`read_document_excerpt / search_document_text / get_document_evidence / inspect_resource`）
+- [x] Tool System Consolidation / T3：建立统一 tool contract registry（capability / approval / review / suspend / result shape）首轮
+- [x] Tool System Consolidation / T3：统一 tool result adapter，明确 raw runtime state / model-facing feedback / UI-facing display 三层边界（首轮 document-tool 接入完成）
+- [x] Tool System Consolidation / T3.5：统一 approval / review / suspend 中断状态机首轮（新增 `tool_interrupt` 事件，相同的 pending-interrupt 语义开始同时驱动后端 turn engine 与前端 approval card）
+- [x] Tool System Consolidation / T4：page-aware document artifact 持久化与更高保真 evidence surfacing 首轮完成
+- [x] Document Ingestion Plan（plan.md 对齐）首轮：移除 PDF 仅前16页限制并升级结构化文本平展；artifact 版本升级到 `v2` 以淘汰历史截断缓存；PDF shell fallback 升级为受控双策略（default + `-layout`）
+- [x] Tool System Consolidation / shell fallback policy：文档阅读允许 runtime-managed、bounded internal fallback（当前为 PDF `pdftotext`），但不允许模型自由发明 shell probing
+- [ ] Tool System Consolidation / T4+：OCR fallback / image-only document recovery（未来 fidelity upgrade，不阻塞当前 resource-driven tool platform）
+- [x] Tool Correctness / Batch A：清理幽灵工具 `replace_file_range` 引用，消除“逻辑认为合法、执行层 unknown tool”的分裂
+- [x] Tool Correctness / Batch A：为 `run_shell_command` 增加 timeout 与 stdout/stderr 输出上限，避免长挂起命令阻塞 turn loop
+- [x] Tool Correctness / Batch A：拆分编辑类 approval bucket（`write_file` vs `patch_file`），不要把精确 patch 和整文件覆写放在同一风险桶
+- [x] Tool Reliability / Batch B：为 `read_file` 实现 UTF-8 / 行边界安全截断，避免中文/CJK 文件尾部失真
+- [x] Tool Reliability / Batch B：为 `apply_text_patch` 增加保守的 trim-based fallback，提高精确 patch 成功率
+- [x] Tool Reliability / Batch B：为 `list_files/search_project` 增加 `rg` 缺失时的 preflight error，避免返回原始 OS 错误
+- [x] Tool/UI Cleanup / Batch C：移除旧 Claude widget aliases / dead branches（含 `askuserquestion` / `todowrite` / stale tool name aliases）
+- [x] Tool/UI Cleanup / Batch C：将 tool 状态显示改为 per-tab/per-message，而不是全局 `isStreaming`
+- [x] Tool/UI Cleanup / Batch C：移除 `chat-messages` 中脆弱的 assistant/result 文本去重
+- [x] Tool/UI Cleanup / Batch C：减少 approval widget 对大体积 `oldContent/newContent` 的直接依赖
+- [ ] Phase 10：完善 agent 功能（tool UX、cancel/interrupt、错误与状态反馈）
+- [ ] Phase 11：补齐 Tool Governance（写文件 / shell 审批、session 级授权）
+- [ ] Phase 12：引入 Proposed Changes / Diff Review
+- [x] Remove stale retry-oriented backend reason text from approval-blocked `write_file` so review-ready cards stay semantically consistent
+- [x] Add a lightweight selection-edit execution hint in prompt assembly so refine/rewrite requests are more likely to produce reviewable changes
+- [x] Unify pending write approval cards with review-ready diff semantics so approval does not keep prompting unnecessary retry
+- [x] Route approval-blocked `write_file` attempts into proposed changes so review can happen before disk write approval
+- [x] Fix approval-blocked `write_file` card semantics so pending approval is not shown as `Wrote <file>`
+- [ ] Phase 12：选区编辑类请求（如 `refine this paragraph`）默认不应只返回 prose 建议，应进入“可审阅的编辑路径”
+- [ ] Agent 体验收口：优先缩小 `chat_completions` runtime 与原始 Claude Code 的行为差距（执行偏好 / 权限摩擦 / review 节奏 / session continuity），而不把问题简化成“模型更弱”
+- [x] Phase A：执行偏好收口（selection edit intent router 已落地：前端显式标记 `reviewable_edit/suggestion/neutral`，后端优先消费 route，再回退启发式）
+- [x] Phase B：审批原地恢复（首轮已落地：`Allow Once / Allow Session` 后自动续跑当前任务，移除 `Retry Now` 主路径；当前仍是本地 session auto-resume，而非 provider-native suspended turn resume）
+- [x] Phase D：review-first diff 主路径收口（首轮已落地：`write_file` 触发时聊天区不再保留长篇 assistant prose，总结让位给 diff panel）
+- [x] Phase C：消息/事件语义强化（首轮已落地：tool status 细化为 `tool_running / awaiting_approval / review_ready / tool_result_ready / responding_after_tools`，顶部状态条同步区分执行中/待批准/review 就绪）
+- [x] Phase E：session continuity 第二轮（首轮已落地：active tab 持续记录 `currentWorkLabel/recentToolActivity`，聊天抽屉显示 Working on / Last tool 轻量 memory chips）
+- [x] TurnProfile / SamplingProfile 首轮：agent 主路径已从“双层关键词 + prompt route marker”迁移到结构化 `turnProfile`（前端显式传 `task_kind/selection_scope/response_mode/sampling_profile`，后端统一解析；OpenAI / MiniMax 请求体已按 profile 注入内部采样默认值）
+- [x] TurnProfile / SamplingProfile 第二轮：sampling profile 已提升为正式 agent runtime config（settings schema / Rust runtime loader / Settings UI 全链路接入），并为 editor/pdf 的显式编辑动作补齐 direct `turnProfile` 传递，进一步压缩 heuristic fallback
+- [x] Chat Completions Agent 重构：按 `CHAT_COMPLETIONS_AGENT_MIGRATION_PLAN.md` 的核心迁移任务已完成（selection-aware edit primitive、shared turn execution layer、unified review artifact、runtime-level pending/resume、`tool_resumed/turn_resumed` 事件、session working memory 第一层均已落地并通过验证）
+- [x] Chat Completions Agent 回归基线已冻结（新增 `CHAT_COMPLETIONS_AGENT_REGRESSION_CHECKLIST.md`，把 selection-aware edit、review-first approval、runtime resume、diff 主路径与 session continuity 固化成统一回归标准）
+- [x] P1：继续抽离完整 `TurnEngine`，把 provider transport 与 turn lifecycle 进一步拆开（当前共享执行层、状态发射、review-first surface 规则与 resume 事件已收敛到 `agent/turn_engine.rs`）
+- [x] P2：把 approval 从 widget auto-resume 提升为 runtime-level pending/resume
+- [x] P2：session continuity 从轻量 identity 升级到 working memory 第一层
+- [x] P2：继续扩展 event adapter（`approval_requested` / `review_artifact_ready` / `tool_resumed` / `turn_resumed` 已落地）
+- [ ] Phase 9.5 / B4：DeepSeek 继续维持未升格状态，默认不投入主线开发
+- [ ] S3（可选）：基于 S1.5 数据评估类型路由加权偏置是否上线
+- [ ] 段落模式继续受控实验（默认不开复杂 claim UI）
+- [ ] S4 继续 Parked，待 S3 有明确收益后再评估
+
+## Done
+- [x] Chat Runtime Selection：默认回切 Claude CLI 之后，补成真实可切换的 `Claude CLI / Local Agent` 双 runtime，而不是继续硬切单路
+- [x] Agent UI Simplification：approval 已从 tool widget 提升为 chat-level interrupt card，tool widget 退回轻量执行轨迹；顶部 session/status 噪音同步压缩
+- [x] MiniMax Depth Tuning：新增 `analysisDeep` sampling profile，并将 attachment/resource 分析请求默认路由到更深的分析档而非 `analysisBalanced`
+- [x] Tool Logic Correctness：去重后的 Batch A/B/C 已完成（ghost tool cleanup / shell timeout+caps / approval bucket split / safe truncation / patch fallback / `rg` preflight / widget cleanup）
+- [x] Attachment / PDF context 主链修复：attachment 不再伪装成 selection；prompt 新增 `Attached resource / Resource path / Attached excerpt` 标记；pin PDF 时开始提取真实文本摘录而不是文件名占位符
+- [x] Sprint 2（Executioner Stability）：TurnBudget、tool-level abort propagation、work-state prompt injection 已完成并通过本地验证
+- [x] Sprint 3（Permission Runtime Hardening）：pending turn 持久化、TTL/stale cleanup、`ToolApprovalRecord` 结构化已完成并通过本地验证
+- [x] Sprint 4（Concurrency / Compatibility / Observability）：只读工具并发、provider tool schema adapter、轻量 telemetry 已完成并通过本地验证
+- [x] Phase 11（部分）：最小 session 级工具审批流已落地（后端为 `write_file` / `run_shell_command` 引入 tab 级审批状态与命令：`allow_once / allow_session / deny_session`；前端高风险工具卡片内已出现审批按钮；`newSession / resumeSession` 会清理当前 tab 的审批状态）
+- [x] Phase 11（部分）：审批后可一键 `Retry Now`（高风险工具卡片在 `Allow Once / Allow Session` 后直接提供重试入口，降低“批准后还要手动重新描述请求”的摩擦）
+- [x] Phase 10（部分）：tool UX 可观测性首轮收口（`tool_call` 事件携带真实 input，前端不再把所有工具参数显示为 `{}`；本地工具名 `read_file/write_file/list_files/search_project/run_shell_command` 已映射到合适 widget；GenericWidget 已能显示 tool result / error）
+- [x] Phase 10（部分）：`chat_completions` 本地 cancel / interrupt 已落地（为 tab 级运行建立 cancellation channel，MiniMax 路径支持本地 abort，不再弹出“does not support cancel”式阻塞错误；当前语义为本地中断而非 provider 远端 cancel）
+- [x] Phase 10（部分）：聊天抽屉状态条已接入（store 为每个 tab 记录 `statusStage/statusMessage`，`agent-event` 的 `status/error/complete(cancelled)` 现在会更新可见状态；抽屉顶部新增轻量状态 banner，用于区分 running / cancelled / failed）
+- [x] Phase 10（部分）：高频 agent 错误文案已做首轮归一化（未配置 API key / unsupported provider / 401 / 403 / 404 / 429 / streaming parse/read 失败，现改为更可操作的用户提示，不再直接暴露原始 transport 报错）
+- [x] 新阶段决策冻结：下一步不做“全面介入 Claude Code”，而是先补齐 agent 能力，再选择性吸收 `claude-code-fork-main` 的高价值交互与架构模式
+- [x] Phase 9.5 / B3：MiniMax 已通过 app 内 smoke test（text stream + tool loop + continuation），正式升格为首个验证通过的 `chat_completions` provider
+- [x] Phase 9.5 / B3：新增 app 内 `Agent Smoke Test`（静默 smoke harness + Settings 入口，直接验证文本流 / tool loop / 多轮续接，不再依赖 shell 侧猜测 secret）
+- [x] Phase 9.5 / B2：`chat_completions` provider skeleton 已落地（新增 `agent/chat_completions.rs`、本地 transcript -> chat messages 转换、provider-aware dispatcher、settings 中 agent provider 从固定 `openai` 扩展为 `openai|minimax|deepseek`，且前端主聊天链无需变化）
+- [x] Phase 9.5 / B1：Settings 与 connectivity 已区分 `reachable` / `responses-compatible` / `chat-compatible`（当前 runtime mode 仍固定为 `responses`，但设置页不再把 `/models = 200` 误判为 Agent Runtime OK）
+- [x] Phase 9.5 / B0：冻结 dual-runtime 方案（`responses` = full agent；`chat_completions` = degraded agent；DeepSeek 不能再被视为 Responses-compatible）
+- [x] Phase 9（Agent Runtime 迁移）：A0-A5 主链完成，应用主路径已与 Claude runtime 解耦（OpenAI agent runtime + 本地 tool loop + settings + frontend decouple + A5 清理均已落地）
+- [x] Phase 9 / A5：组件目录已中性化（`components/claude-chat/` -> `components/agent-chat/`，`claude-chat-drawer.tsx` -> `agent-chat-drawer.tsx`，导入与 `AgentChatDrawer` 符号同步更新；`tsc` / desktop `build` 通过）
+- [x] Phase 9 / A5：`src-tauri/src/claude.rs` 处理策略已冻结为“legacy 保留，不参与编译”（原因：文件在 dirty worktree 中仍为 modified，硬删风险高；当前通过移除 `mod claude;` 已彻底切断运行时依赖）
+- [x] Phase 9 / A5：`process_utils.rs` 已抽出通用进程能力，`claude.rs` 已退出 Rust 编译路径（`mod claude;` 移除、`run_shell_command` / `is_essential_env_var` 迁出、`uv.rs` / `agent/tools.rs` / `lib.rs` 完成切换；`rg` 确认主路径已无 `crate::claude::*` / `claude::` 引用；`cargo check --lib` 与 `cargo test --lib process_utils::` 通过）
+- [x] Phase 9 / A5：高价值命名收口（`stores/claude-chat-store.ts` -> `stores/agent-chat-store.ts`，`hooks/use-claude-events.ts` -> `hooks/use-agent-events.ts`，导入与测试同步更新；`tsc` / desktop `build` / vitest stores 通过）
+- [x] Phase 9 / A5（部分）：移除主路径中已废弃的 Claude setup 入口（删除 `components/claude-setup.tsx` / `stores/claude-setup-store.ts`，并从 Tauri `invoke_handler` 移除旧 `check/install/login/execute/session/fast_mode` Claude 命令暴露；保留 `claude.rs` 中仍被底层复用的工具函数）
+- [x] Phase 9 / A4：前端主聊天链路已切到 `agent_*`（`claude-chat-store` 调 `agent_start_turn/continue_turn/cancel_turn`、`use-claude-events` 改读 `agent-event/agent-complete`、Project Picker 去除 Claude startup gate、Session Selector 改读本地 agent sessions、后端补齐本地 transcript/history 供 resume 回放；`tsc` / desktop `build` / `cargo check --lib` / `cargo test --lib agent::` 通过）
+- [x] Phase 9 / A4.5：Agent 独立 provider settings 已落地（schema/store/UI/Rust runtime loader/connectivity 全链路贯通；OpenAI provider 改为 settings 优先、env 兜底；`tsc`/`vitest settings-*`/`cargo check --lib`/`cargo test --lib agent::`/desktop `build` 通过）
+- [x] Phase 9 / A3：接入 OpenAI Responses function tool loop（本地 `read_file/list_files/search_project` 可用；`write_file/run_shell_command` 在审批 UI 落地前默认硬门控；`cargo check --lib` 与 `cargo test --lib agent::` 通过）
+- [x] Phase 9 / A2：接通 OpenAI Responses API 的 backend-only text streaming 主链路（环境变量驱动，支持 `agent_start_turn` / `agent_continue_turn` / `agent_cancel_turn` 基础链路）
+- [x] Phase 9 / A1：新增 provider-agnostic `agent` backend skeleton（事件协议 / session 模型 / OpenAI provider interface / Tauri commands 已落地并通过 `cargo check --lib`）
+- [x] Phase 9 / A0：冻结 Agent Runtime 替换方案（新增 `AGENT_RUNTIME_REPLACEMENT_WORKFLOW.md`，明确 API/事件/迁移顺序/风险边界）
+- [x] Editor：DOCX 新增“Import Editable Copy”能力（生成 `*.editable.md` 并自动切换到可编辑副本）
+- [x] Editor：DOCX 导入质量增强（轻量 HTML->Markdown，保留标题/列表/链接/表格/代码块基础结构）
+- [x] S0：P0 UX Gate 收口（悬浮 Citation 面板补齐 loading/results/error/retry/close，并修复 applying 期间误消失）
+- [x] S1：`citation_search` 返回 `need_decision`，前端 store 接入并可用于决策提示
+- [x] S1.5：落地基线采集（`.workflow-local/citation_usage_baseline.jsonl`，记录选区粒度/need/claim/results）
+- [x] S2：软门控落地（`need_level=no` 仅阻断 auto-apply，不阻断检索/手动引用）
+- [x] 风险修正：`CONTROVERSY_HINTS` 去除单词噪声触发（移除 `however`）
+- [x] 分类器保守化：不确定且有锚点 cue 的样本提升到 `suggest`，降低 false-negative 漏引风险
+- [x] 验证通过：`qa:release` 与 `qa:release:full` 实跑全绿（含 Rust cargo check）
+- [x] 方案重排：采纳“分类器风险与 ROI”批评，workflow 升级为 v3（P0->S1->S1.5->S2）
+- [x] 新决策固化：段落选区采用“claim 判定 -> 按需检索 -> claim 归因展示”流程
+- [x] 新决策固化：LLM 采用“低置信兜底”策略，不作为默认全量主链路
+- [x] 方案精炼：`CITATION_ARGUMENT_WORKFLOW.md` 升级为 v2（阶段输入输出、门禁、回滚、执行纪律）
+- [x] 新增冻结文档：`CITATION_ARGUMENT_WORKFLOW.md`（分阶段、门禁、回滚、验收标准）
+- [x] Phase 3.5：Query Scoring 方案落地完成（按 `CITATION_QUERY_SCORING_WORKFLOW.md` 执行 M1-M5 全链路收口）
+- [x] Phase 3：真实样本阈值校准完成（扩样到 30 条，`top1=0.7586`, `mrr=0.8793`, `empty_rate=0.0333`）
+- [x] Phase 3.5 / M5：`hydrothermal` 泛化误排硬缺陷收口（hardcase 单测通过：`hardcase_material_match_should_beat_generic_hydrothermal_title`）
+- [x] Phase 3：默认阈值已落参（`citation:sync-thresholds --write` 写回 `settings-schema.ts` / `citation-store.ts` / `settings.rs`）
+- [x] Phase 6：收口复验完成（`qa:release` 与 `qa:release:full` 当次实跑均通过）
+- [x] Phase 6：系统化测试收口完成（`qa:release` / `qa:release:full` 全绿，含 Rust cargo check）
+- [x] Phase 6：`release-check-desktop.ts` 新增 macOS Homebrew Rust 环境自动注入（PKG_CONFIG_PATH/CFLAGS/CXXFLAGS），消除 `icu/harfbuzz` 假阻塞
+- [x] Phase 3 / Phase 6：`citation:calibrate` 管线支持无 `pnpm` 环境回退（`runner=local-tsx`），并已实跑验证（v5: labeled=8, top1=0.7143, mrr=0.8571）
+- [x] Phase 6：`qa:release` / `qa:release:full` 复跑通过（TypeScript + Vitest 全绿；Rust 失败仍为 optional，定位到本机 `icu-uc`/`PKG_CONFIG_PATH`）
+- [x] Phase 6：发布检查脚本支持 `pnpm` 缺失回退到本地 `node_modules/.bin/{tsc,vitest}`，避免环境导致的假失败
+- [x] Phase 3.5 / M5：`formula-signal penalty` 二段增强（短句+化学式密集 claim 时加大材料不一致惩罚，重点压制 hydrothermal 泛化误排）
+- [x] Phase 3.5 / M5：Debug 标注新增 `Append Local Dataset`（一键写入 `.workflow-local/citation_eval_samples.jsonl`，减少手工复制 JSON）
+- [x] Phase 3.5 / M5：并入 `sample_2026-03-29T17-03-22-514Z` 扩样到 8 条并完成 v5 校准（`top1: 0.6667 -> 0.7143`, `mrr: 0.8333 -> 0.8571`）
+- [x] Phase 6：系统化测试（可自动化部分）复跑完成：`tsc` 通过、`vitest` 全量 170/170 通过
+- [x] Phase 3.5 / M5：实现短句化学式一致性惩罚（formula-signal penalty），用于压制“方法词命中但材料体系不一致”的 top1 误排
+- [x] Phase 3.5 / M5：并入新标注样本 `sample_2026-03-30T03-29-42-140Z`（v4: labeled=7 / unlabeled=0），离线评测更新为 `top1=0.6667, top3/top5=1, mrr=0.8333`
+- [x] Phase 5：Debug 补齐评估标注界面（候选选择/Top1/NoMatch/Clear）与导出能力（Raw/Eval/Labeled Copy）
+- [x] Phase 5：选区悬浮窗恢复 Debug 模式（`Debug Citation` 动作 + 调试对话框 + 样本复制按钮）
+- [x] Phase 6：GUI quick checklist 已 PASS（选区检索/候选采纳/bib 幂等/Zotero/设置稳定性）
+- [x] Phase 6：更新 GUI E2E 清单以匹配新入口（移除 Scholar 依赖），并新增 3-5 分钟 quick checklist
+- [x] Phase 5：选区悬浮窗补齐 Citation 反馈闭环（searching/results/applied/error 内联显示，避免“点了 Search 无提示”）
+- [x] Phase 5：选区悬浮窗新增 `Search Citation` 动作（与 Proofread 并列），Sidebar 底部移除 Scholar 入口（仅保留 Zotero）
+- [x] Phase 7：Citation 设置简化（默认仅保留 Search Mode + LLM 开关，query 细参数折叠到高级区）
+- [x] Phase 3.5 / M5：补齐遗留 unlabeled 样本（`sample_2026-03-28T13-36-53-406Z`），v3 数据集达成 labeled=6 / unlabeled=0
+- [x] Phase 3.5 / M5：支持 `expected.no_match=true` 负样本标注（Debug 导出 + check/evaluate/label-template/apply-labels 脚本贯通）
+- [x] Phase 3.5 / M5：Debug 补充 early-stop 可观测（原因/阶段/命中率/命中数/尝试数/merged 数量）
+- [x] Phase 3.5 / M4：设置项补全（query topN / MMR λ / quality gate）并贯通到执行链路 + Debug 可观测
+- [x] Phase 3.5 / M3：按 query score 执行 top-N + MMR 去冗余，并将早停改为“高质量命中率”联动
+- [x] Phase 3.5 / M2：接入 `query_embedding_provider`（`none|local_embedding`）+ timeout + 自动回退；Query Score 已融合 local embedding 语义分
+- [x] Phase 3.5 / M1：新增 `query_quality_score`（lexical 分项）并按 score 驱动 query 执行顺序
+- [x] Phase 3.5 / M1：Scholar Debug 显示 query 分项得分（sem/anchor/spec/noise/len）与执行状态
+- [x] Phase 3：检索词提取稳健化（锚点优先 query + 工艺噪声抑制 + 长句降权 + 早停条件收紧）
+- [x] Phase 3：Debug 弹窗可视化标注（候选点选、Select Top1、expected 预览、Copy Labeled Sample）
+- [x] Phase 3：零手工弱标注命令（`citation:auto-label`，按 top1 score/gap 门控自动回填 `expected`）
+- [x] Phase 3：标签回写脚本（`citation:apply-labels`，支持 `--use-proposed` / `--overwrite-labeled`）
+- [x] Phase 3：`citation:calibrate` 接入标签回写（`--labels` / `--labels-use-proposed` / `--labels-overwrite-labeled`）
+- [x] Phase 3：`citation:calibrate` 增强（内置 `label-template` 产物，支持 `--label-top-k` / `--label-include-labeled` / `--skip-label-template`）
+- [x] Phase 3：样本标注模板脚本（`citation:label-template`，从 top-k merged results 生成 DOI/Title 候选）
+- [x] Phase 5：Selection Citation 升级为独立 Scholar 面板（Sidebar 底部改为 Scholar/Zotero 切换，Zotero 面板解耦）
+- [x] Phase 6：发布前自动检查脚本（`qa:release` / `qa:release:full`，Rust 依赖失败按 optional 处理）
+- [x] Phase 6：GUI E2E 清单文档（`docs/release-gui-e2e-checklist.md`）
+- [x] Phase 3：阈值落参工具链（`citation:sync-thresholds`，支持 report dry-run/可选写回）
+- [x] Phase 6：单测补充（`citation-store`：阈值门控/决策提示/bib 幂等 upsert/样式解析/句位辅助）
+- [x] Phase 6：集成测试补充（`citation-store` action 流程：search->auto apply / apply 幂等 / provider 失败 / Zotero 同步）
+- [x] Phase 6：E2E-lite（选区 -> 检索 -> 自动插引 -> bib + Zotero 一致性断言）
+- [x] Phase 2：Provider 解析容错增强（S2 `data/papers/null` 兼容；Crossref `date-parts`/count 异形字段兼容）
+- [x] Phase 2：OpenAlex/Crossref 检索词紧凑化（避免长句直传，统一 compact query 策略）
+- [x] Phase 2：Crossref + 三源 timeout/retry(1)/circuit 主链接入
+- [x] Phase 2.5：M1 检索计划骨架（CitationQueryPlan + debug 可视化）
+- [x] Phase 2.5：M2 LLM query 生成器（JSON schema + 超时降级 + settings 接入）
+- [x] Phase 2.5：M3 可观测性（执行顺序 trace + provider budget 命中展示）
+- [x] Phase 2.5：M3 融合加权（按 source/strategy/provider 调整 merge score，重复证据加分）
+- [x] Phase 3：证据句抽取基础版（title/abstract sentence matching + score explain 字段）
+- [x] Phase 3：矛盾惩罚基础版（direction/sentiment/significance 冲突惩罚接入总分）
+- [x] Phase 3：阈值安全阀基础版（auto-apply 增加 contradiction penalty 门控）
+- [x] Phase 3：离线评测脚本（`citation:evaluate`，支持 top-k/空结果率/延迟/基线对比）
+- [x] Phase 3：阈值建议输出（auto/review + contradiction penalty gate 推荐）
+- [x] Phase 3：自动/复核决策解释提示（前端展示未自动插引原因）
+- [x] Phase 3：Debug 评测样本导出（`Copy Eval Sample`，含 `latency_ms`）
+- [x] Phase 3：样本集合并脚本（`citation:merge-samples`）
+- [x] Phase 3：样本质量检查脚本（`citation:check-samples`，支持导出 unlabeled 列表）
+- [x] Phase 3：无 LLM 语义检索词增强（semantic focus/phrase/numeric context 规则提取）
+- [x] Phase 2：补 Crossref adapter（统一为 CitationCandidate）
+- [x] Phase 2：为 S2/OpenAlex/Crossref 增加 timeout + retry(1) + circuit
+- [x] 选区检索、预处理、多 query 合并去重
+- [x] 429 降级策略（S2 限流自动回退 OpenAlex）
+- [x] S2 连接增强（超时、重试、退避、冷却窗口）
+- [x] Debug 检索窗口（检索词、来源、返回结果全量可见）
+- [x] Bib 幂等 upsert + 句位插入 + 样式策略
+- [x] Zotero DOI 幂等写入 + Collection 归档保障
+- [x] Phase 7：M1 需求冻结草案（`settings_contract.md`）
+- [x] Phase 7：M2 schema + migration + 启动迁移回写（`settings-schema.ts` + `settings-api.ts`）
+- [x] Phase 7：M3 命令实现（`settings_get/set/reset/export/import`）
+- [x] Phase 7：M3 收口验证（settings-api 调用测试 + build 通过）
+- [x] Phase 7：M4 MVP（settings-store + SettingsDialog + Sidebar 入口）
+- [x] Phase 7：M4 收口（默认编辑器行为接入、构建与测试通过）
+- [x] Phase 7：Settings UI 收口（风格对齐主应用，修复 Tab 切换时窗口尺寸跳动）
+- [x] Phase 7：M5 扩展迁移（citation 阈值/limit/zotero auto-sync 改为 settings 运行时驱动）
+- [x] Phase 7：M5 组件化统一补丁（Selection Citation 样式策略下拉切到 `ui/select`）
+- [x] Phase 7：Settings 信息架构修复（LLM Query Key 与开关/模型统一放在 Citation）
+- [x] Phase 7：Settings 深度审计（问题清单/重复入口/重构方案，已与 workflow 对齐）
+- [x] Phase 7：Settings 审计回灌（新增 `SETTINGS_AUDIT_2026-03-28.md` 与依赖化执行序）
+- [x] Phase 7 / M6：S1 统一保存模型（Citation 参数改为即时保存，数字字段 onBlur 提交）
+- [x] Phase 7 / M6：S2 分组重排（LLM Query 开关/参数/Key 迁移到 Providers）
+- [x] Phase 7 / M6：S4 全局重置二次确认（Danger Zone + 确认弹窗）
+- [x] Phase 7 / M6：S3 作用域可视化（三项 Citation 参数支持 Global/Project override）
+- [x] Phase 7 / M6：S5 API Key 体验改造（mask/reveal + 单按钮保存逻辑）
+- [x] Phase 7 / M6：LogLevel 接入日志过滤链路（settings -> localStorage -> log-store gate）
+- [x] Phase 7 / M6：Provider 连通性测试入口（S2/OpenAlex/Crossref/LLM endpoint + UI 展示）
+- [x] Phase 7：S6 Secret 存储升级（macOS Keychain 优先，失败回落 `secrets.json`）
+- [x] Phase 7 / M6：入口去重策略落地（Citation 样式仅在 Settings 可写，Selection 区域改为只读展示）
+- [x] Phase 7：S10 阶段1（settings-store 运行时去除 `resolveEffectiveSettings` 依赖）
+- [x] Phase 7：S10 Rust 单一真源收口（前端运行时不再参与 settings sanitize/resolve）
+
+- [x] Phase 12（首段）：agent `write_file` 成功结果已接入 existing proposed changes pipeline（返回 `oldContent/newContent/path`，前端收到 `tool_result` 后自动 `addChange`，复用现有 merge review）
+
+- [x] Phase 12（第二段）：provider-neutral execution bias added to agent runtime; selection edit requests now receive CC-like system guidance instead of relying on ad-hoc prompt wording
+
+- [x] Phase 12（hotfix）：MiniMax tool loop now preserves prior context across tool rounds; fixes silent-stop behavior after a single tool call
+- [x] Phase 13（首段）：审批卡片开始选择性吸收 `claude-code-fork-main` 的 permission dialog 表达方式（按工具类型生成更清晰的问题句与按钮文案；`write_file` / `run_shell_command` 不再共用生硬的通用审批措辞）
+- [x] Phase 13（第二段）：审批卡片补齐信息层级（`Pending Approval / Review Ready` 状态 badge、目标对象标签、`Next step` 引导），让用户不再自行拼接“审批 / diff / 重试”的关系
+- [x] Phase 13（第三段）：`write_file` 审批卡片补齐轻量 preview（首个变更行 + 变更行数），开始具备 CC 风格的“先看准备改什么，再决定是否允许”的 file preview 味道
+- [x] Phase 13（第四段）：审批卡片补齐操作摘要（`Create file / Update file` + 目标路径 + 变更行数），方向 1「继续打磨审批卡片」已可视为完成交付
+- [x] Phase 13（第五段）：session/history 表达与恢复体验首轮增强（会话列表补齐 provider/model/preview/message count；恢复时 tab 携带会话 identity，而不再像匿名历史）
+- [x] Phase 13（第六段）：session/history 主界面收口（tab 补齐会话标识，聊天抽屉新增当前活动会话条，provider/model/更新时间/preview 不再只藏在 session 下拉中）
+- [x] Phase 13（分析固化）：完成 `claude-code-fork-main` 高价值能力地图（统一执行引擎 / 消息适配层 / 权限运行时 / review-first diff / session continuity），并明确“不借绑定，只借系统设计”
+- [x] Phase 13（第七段）：前端 message adapter 边界落地（live tool events 与 session history 中的 `tool_result` 现在都会统一规范成 UI-safe display content；React 不再直接消费混合 raw tool JSON）
+- [x] Agent Runtime 判断固化：MiniMax 体感弱于原始 Claude 的核心原因已写入 workflow（runtime class / 执行偏好 / 权限与 review 摩擦 / 事件适配成熟度 / session continuity，而不只是模型差异）
+- [x] Agent Runtime 方案固化：下一轮改进顺序冻结为 A/B/D/C/E（先执行偏好、再审批减摩、再 review-first diff、最后补事件语义与 session continuity）
+- [x] Claude Code Fork 技术提炼完成，并冻结为 `CHAT_COMPLETIONS_AGENT_MIGRATION_PLAN.md`（明确：最先要修的是 selection-aware edit primitive 与 turn engine，而不是继续给 `write_file` 打补丁）
+- [x] Chat Completions Migration / P0：selection-aware edit primitive 已落地（新增 `replace_selected_text` / `apply_text_patch`，选区编辑默认不再依赖 whole-file `write_file`）
+- [x] Chat Completions Migration / P1（首轮）：公共执行层已抽出（新增 `agent/turn_engine.rs`，统一 OpenAI / MiniMax 的 tool execution、status emission、reviewable edit text-surface 规则）
+- [x] Chat Completions Migration / P1（首轮）：review artifact 已统一成结构化对象（新增 `agent/review_runtime.rs` 与 `AgentReviewArtifact`；工具结果现在携带 `reviewArtifactPayload`，前端 proposed changes 优先消费统一 artifact）
+- [x] Chat Completions Migration / P1（增量）：event adapter 已补首轮结构化事件（新增 `approval_requested` / `review_artifact_ready`，前端不再只能靠字符串 status 推断审批与 review 状态）
+- [x] Phase A（首轮）：selection edit intent router 已从分散 prompt hint 升级为结构化 `turnProfile`（前端显式传 `task_kind/selection_scope/response_mode/sampling_profile`；后端优先消费 `TurnProfile`，heuristic 仅作弱兜底）
+- [x] Phase B（首轮）：approval + retry 已推进为 approval + automatic continuation（审批卡片批准后直接调用会话续跑，不再要求用户手动点击 `Retry Now`）
+- [x] Phase D（首轮）：review-first diff 已成为更明确的编辑主路径（当模型进入 `write_file` 流程时，聊天区不再同步保留大段“我改了什么”的 prose，总结不再与 diff panel 抢主舞台）
+- [x] Phase C（首轮）：tool progress / status 语义已强化（provider 在工具开始、等待审批、review 就绪、工具结果返回、继续推理这几步都会发更明确的状态；聊天顶部 banner 已按状态分色）
+- [x] Phase E（首轮）：session continuity 第二轮已落地（当前工作对象与最近工具活动进入 tab state，并在聊天抽屉中持续可见）
+
+- [x] Tool System Consolidation / performance follow-up：attachment analysis now reuses persisted PDF/DOCX artifacts on warm paths, and evidence-rich attachment turns stop opening extra document-tool rounds by default
+
+- [x] Runtime rollback：default chat/runtime path switched back to Claude CLI / Claude Code-style backend; local agent runtime remains in-tree but is no longer the primary product path
+- [x] Tool Pipeline Consolidation（首轮）：tool policy、approval/review gating、model/UI-facing result shaping 开始从分散逻辑收口到共享 contract/display pipeline（后端新增 `ToolExecutionPolicyContext` / `AgentToolResultDisplayContent`，前端 tool widgets 开始消费统一 display payload）
+- [x] Tool Pipeline Consolidation（第二段）：后端 tool execution 已按能力域拆成 `document / edit / workspace / shell` 模块，`tools.rs` 开始退回 façade + shared contract/helpers，而不再继续做 2600 行大一统实现
