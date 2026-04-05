@@ -1,11 +1,11 @@
-import { type FC, useState, useCallback } from "react";
+import { type FC, useState, useCallback, useEffect, useMemo } from "react";
 import { Copy, RotateCcw, Edit2, X, Check } from "lucide-react";
 import { toast } from "sonner";
 import { useAgentChatStore, type AgentStreamMessage } from "@/stores/agent-chat-store";
 
 interface MessageActionsProps {
   message: AgentStreamMessage;
-  messageIndex: number;
+  sourceIndex?: number;
   canRetry?: boolean;
   className?: string;
 }
@@ -44,12 +44,11 @@ export function extractMessageText(message: AgentStreamMessage): string {
 }
 
 /**
- * MessageActions component - provides copy, edit, and retry buttons
- * Now positioned inside the message bubble with proper opacity/hover effects
+ * MessageActions component - compact actions row for message-level operations.
  */
 export const MessageActions: FC<MessageActionsProps> = ({
   message,
-  messageIndex,
+  sourceIndex,
   canRetry = true,
   className = "",
 }) => {
@@ -57,9 +56,25 @@ export const MessageActions: FC<MessageActionsProps> = ({
   const [editedText, setEditedText] = useState(extractMessageText(message));
   const sendPrompt = useAgentChatStore((s) => s.sendPrompt);
   const messages = useAgentChatStore((s) => s.messages);
+  const text = useMemo(() => extractMessageText(message), [message]);
+
+  useEffect(() => {
+    setEditedText(text);
+  }, [text]);
+
+  const resolvedIndex = useMemo(() => {
+    if (typeof sourceIndex === "number" && sourceIndex >= 0) {
+      return sourceIndex;
+    }
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i] === message) {
+        return i;
+      }
+    }
+    return -1;
+  }, [sourceIndex, messages, message]);
 
   const handleCopy = useCallback(async () => {
-    const text = extractMessageText(message);
     if (!text) {
       toast.error("No text to copy");
       return;
@@ -71,7 +86,7 @@ export const MessageActions: FC<MessageActionsProps> = ({
     } catch (err) {
       toast.error("Failed to copy");
     }
-  }, [message]);
+  }, [text]);
 
   const handleEdit = useCallback(() => {
     if (message.type !== "user") {
@@ -99,19 +114,14 @@ export const MessageActions: FC<MessageActionsProps> = ({
   }, [editedText, sendPrompt]);
 
   const handleRetry = useCallback(async () => {
-    if (message.type !== "assistant") {
-      toast.error("Can only retry assistant messages");
-      return;
-    }
-
     try {
-      if (!messages || messages.length <= messageIndex) {
+      if (!messages || resolvedIndex < 0 || resolvedIndex >= messages.length) {
         toast.error("Cannot find message to retry");
         return;
       }
 
       // Search backwards for the last user message
-      for (let i = messageIndex - 1; i >= 0; i--) {
+      for (let i = resolvedIndex - 1; i >= 0; i--) {
         if (messages[i].type === "user") {
           const userText = extractMessageText(messages[i]);
           if (userText) {
@@ -127,7 +137,11 @@ export const MessageActions: FC<MessageActionsProps> = ({
     } catch (err) {
       toast.error("Failed to retry");
     }
-  }, [message.type, messageIndex, messages, sendPrompt]);
+  }, [messages, resolvedIndex, sendPrompt]);
+
+  const showCopy = Boolean(text);
+  const showEdit = message.type === "user";
+  const showRetry = message.type === "assistant" && canRetry;
 
   if (isEditing && message.type === "user") {
     return (
@@ -161,36 +175,44 @@ export const MessageActions: FC<MessageActionsProps> = ({
     );
   }
 
-  return (
-    <div className={`flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ${className}`}>
-      <button
-        onClick={handleCopy}
-        className="inline-flex items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-        title="Copy message"
-        aria-label="Copy"
-      >
-        <Copy className="size-3.5" />
-      </button>
+  if (!showCopy && !showEdit && !showRetry) {
+    return null;
+  }
 
-      {message.type === "user" && (
+  return (
+    <div
+      className={`inline-flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${className}`}
+    >
+      {showCopy ? (
+        <button
+          onClick={handleCopy}
+          className="inline-flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          title="Copy message"
+          aria-label="Copy"
+        >
+          <Copy className="size-3" />
+        </button>
+      ) : null}
+
+      {showEdit && (
         <button
           onClick={handleEdit}
-          className="inline-flex items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          className="inline-flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
           title="Edit and resend message"
           aria-label="Edit"
         >
-          <Edit2 className="size-3.5" />
+          <Edit2 className="size-3" />
         </button>
       )}
 
-      {message.type === "assistant" && canRetry && (
+      {showRetry && (
         <button
           onClick={handleRetry}
-          className="inline-flex items-center justify-center rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+          className="inline-flex items-center justify-center rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
           title="Regenerate response"
           aria-label="Retry"
         >
-          <RotateCcw className="size-3.5" />
+          <RotateCcw className="size-3" />
         </button>
       )}
     </div>

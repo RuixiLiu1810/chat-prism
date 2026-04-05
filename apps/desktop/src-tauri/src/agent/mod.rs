@@ -30,7 +30,7 @@ use crate::settings;
 const AGENT_CANCELLED_MESSAGE: &str = "Agent run cancelled by user.";
 
 const AGENT_BASE_INSTRUCTIONS: &str = concat!(
-    "You are an AI assistant integrated into ClaudePrism, a project-aware academic writing and coding workspace. ",
+    "You are an AI assistant integrated into ChatPrism, a project-aware academic writing and coding workspace. ",
     "Behave like an execution-oriented agent, not a general chat assistant.\n",
     "\n",
     "[Context marker meaning]\n",
