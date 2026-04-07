@@ -10,373 +10,38 @@ import {
   type IngestedResourceMatch,
   type ResourceEvidenceGroup,
 } from "@/lib/resource-ingestion";
-import {
-  adaptAgentStreamMessageForUi,
-  getToolResultDisplayTarget,
-} from "@/lib/agent-message-adapter";
+import { adaptAgentStreamMessageForUi } from "@/lib/agent-message-adapter";
 import type { AgentRuntimeKind } from "@/lib/settings-schema";
+import {
+  normalizeAgentError,
+  resolveTurnProfile,
+  offsetToLineCol,
+  buildSessionIdentity,
+  summarizeToolTarget,
+  deriveToolContextFromMessages,
+  type AgentTurnProfile,
+  type AgentPromptContext,
+  type AgentPromptContextKind,
+  type AgentStreamMessage,
+  type ContentBlock,
+  type SessionIdentity,
+  type ResumableSessionMeta,
+} from "@/lib/agent-intent";
+
+// Re-export types and functions so existing importers don't break
+export {
+  normalizeAgentError,
+  offsetToLineCol,
+  type AgentTurnProfile,
+  type AgentPromptContext,
+  type AgentPromptContextKind,
+  type AgentStreamMessage,
+  type ContentBlock,
+  type SessionIdentity,
+  type ResumableSessionMeta,
+};
 
 const log = createLogger("agent-chat");
-
-export function normalizeAgentError(message: string): string {
-  const text = message.trim();
-
-  if (!text) {
-    return "Agent runtime failed. Please retry.";
-  }
-
-  if (text.includes("Agent run cancelled by user.")) {
-    return "Agent run cancelled.";
-  }
-
-  if (text.includes("API key is not configured")) {
-    return "Agent provider API key is not configured. Please check Settings -> Providers.";
-  }
-
-  if (
-    text.includes("Unsupported agent provider in settings") ||
-    text.includes("not promoted to a working transport")
-  ) {
-    return "The selected provider is not available in the current local runtime.";
-  }
-
-  if (text.includes("request failed with status 401")) {
-    return "Provider authorization failed (401). Please check the API key.";
-  }
-
-  if (text.includes("request failed with status 403")) {
-    return "Provider access was denied (403). Please check account permissions or model access.";
-  }
-
-  if (text.includes("request failed with status 404")) {
-    return "Provider route was not found (404). Please check the Base URL and runtime mode.";
-  }
-
-  if (text.includes("request failed with status 429")) {
-    return "Provider rate limit reached (429). Please wait a moment and retry.";
-  }
-
-  if (text.includes("Failed to parse") && text.includes("stream")) {
-    return "Provider returned an unexpected streaming payload. Please retry or switch provider.";
-  }
-
-  if (text.includes("request failed:")) {
-    return "Provider request failed. Please check network connectivity and provider settings.";
-  }
-
-  if (text.includes("streaming read failed")) {
-    return "Agent stream was interrupted. Please retry.";
-  }
-
-  return text;
-}
-
-function isSuggestionOnlyRequest(prompt: string): boolean {
-  const normalized = prompt.toLowerCase();
-  return [
-    "suggest",
-    "propose",
-    "give me options",
-    "do not modify",
-    "don't modify",
-    "without modifying",
-    "review only",
-    "建议",
-    "给我几个",
-    "不要改文件",
-    "只是看看",
-    "解释一下",
-    "分析一下",
-    "只做建议",
-    "仅建议",
-  ].some((needle) => normalized.includes(needle) || prompt.includes(needle));
-}
-
-function isEditIntentRequest(prompt: string): boolean {
-  const normalized = prompt.toLowerCase();
-  return [
-    "refine",
-    "rewrite",
-    "polish",
-    "improve",
-    "proofread",
-    "fix",
-    "revise",
-    "edit",
-    "tighten",
-    "make this better",
-    "修改",
-    "改成",
-    "改为",
-    "润色",
-    "优化",
-    "精简",
-    "修正",
-    "完善",
-    "重写",
-    "调整",
-    "修一下",
-    "帮我改",
-    "改一下",
-  ].some((needle) => normalized.includes(needle) || prompt.includes(needle));
-}
-
-function isAnalysisRequest(prompt: string): boolean {
-  const normalized = prompt.toLowerCase();
-  return [
-    "explain",
-    "analyze",
-    "analyse",
-    "critique",
-    "comment on",
-    "what does",
-    "why is",
-    "why does",
-    "assess",
-    "解释",
-    "分析",
-    "评估",
-    "批评",
-    "怎么看",
-    "怎么样",
-  ].some((needle) => normalized.includes(needle) || prompt.includes(needle));
-}
-
-function isDeepAnalysisRequest(prompt: string): boolean {
-  const normalized = prompt.toLowerCase();
-  return [
-    "detailed",
-    "deep",
-    "deeper",
-    "compare",
-    "comparison",
-    "synthesize",
-    "summary",
-    "summarize",
-    "which paper",
-    "which article",
-    "evidence",
-    "详细",
-    "深入",
-    "展开",
-    "对比",
-    "比较",
-    "总结",
-    "归纳",
-    "综述",
-    "哪篇",
-    "哪一篇",
-    "列出",
-    "依据",
-  ].some((needle) => normalized.includes(needle) || prompt.includes(needle));
-}
-
-function resolveAnalysisSamplingProfile(
-  prompt: string,
-  preferDeep = false,
-): AgentSamplingProfile {
-  return preferDeep || isDeepAnalysisRequest(prompt)
-    ? "analysis_deep"
-    : "analysis_balanced";
-}
-
-type AgentTaskKind =
-  | "general"
-  | "selection_edit"
-  | "file_edit"
-  | "suggestion_only"
-  | "analysis";
-type AgentSelectionScope = "none" | "selected_span";
-type AgentResponseMode = "default" | "reviewable_change" | "suggestion_only";
-type AgentSamplingProfile =
-  | "default"
-  | "edit_stable"
-  | "analysis_balanced"
-  | "analysis_deep"
-  | "chat_flexible";
-
-export interface AgentTurnProfile {
-  taskKind: AgentTaskKind;
-  selectionScope: AgentSelectionScope;
-  responseMode: AgentResponseMode;
-  samplingProfile: AgentSamplingProfile;
-  sourceHint?: string | null;
-}
-
-export type AgentPromptContextKind = "selection" | "file" | "attachment";
-
-export interface AgentPromptContext {
-  label: string;
-  filePath: string;
-  absolutePath?: string;
-  selectedText: string;
-  imageDataUrl?: string;
-  kind: AgentPromptContextKind;
-  sourceType?: string;
-}
-
-function makeTurnProfile(
-  taskKind: AgentTaskKind,
-  selectionScope: AgentSelectionScope,
-  responseMode: AgentResponseMode,
-  samplingProfile: AgentSamplingProfile,
-  sourceHint: string | null,
-): AgentTurnProfile {
-  return {
-    taskKind,
-    selectionScope,
-    responseMode,
-    samplingProfile,
-    sourceHint,
-  };
-}
-
-function resolveTurnProfile(
-  prompt: string,
-  options: {
-    hasSelectionContext: boolean;
-    hasActiveFile: boolean;
-    hasAttachmentContext?: boolean;
-  },
-): AgentTurnProfile {
-  const { hasSelectionContext, hasActiveFile, hasAttachmentContext } = options;
-
-  if (hasSelectionContext) {
-    if (isSuggestionOnlyRequest(prompt)) {
-      return makeTurnProfile(
-        "suggestion_only",
-        "selected_span",
-        "suggestion_only",
-        "analysis_balanced",
-        "selection+explicit_suggestion",
-      );
-    }
-    if (isAnalysisRequest(prompt)) {
-      return makeTurnProfile(
-        "analysis",
-        "selected_span",
-        "default",
-        resolveAnalysisSamplingProfile(prompt),
-        "selection+explicit_analysis",
-      );
-    }
-    return makeTurnProfile(
-      "selection_edit",
-      "selected_span",
-      "reviewable_change",
-      "edit_stable",
-      "selection+default_edit",
-    );
-  }
-
-  if (hasActiveFile && isSuggestionOnlyRequest(prompt)) {
-    return makeTurnProfile(
-      "suggestion_only",
-      "none",
-      "suggestion_only",
-      "analysis_balanced",
-      "active_file+explicit_suggestion",
-    );
-  }
-  if (hasActiveFile && isAnalysisRequest(prompt)) {
-    return makeTurnProfile(
-      "analysis",
-      "none",
-      "default",
-      resolveAnalysisSamplingProfile(prompt),
-      "active_file+explicit_analysis",
-    );
-  }
-  if (hasActiveFile && isEditIntentRequest(prompt)) {
-    return makeTurnProfile(
-      "file_edit",
-      "none",
-      "reviewable_change",
-      "edit_stable",
-      "active_file+explicit_edit",
-    );
-  }
-
-  if (hasAttachmentContext && isSuggestionOnlyRequest(prompt)) {
-    return makeTurnProfile(
-      "suggestion_only",
-      "none",
-      "suggestion_only",
-      "analysis_balanced",
-      "attachment+explicit_suggestion",
-    );
-  }
-  if (hasAttachmentContext && isAnalysisRequest(prompt)) {
-    return makeTurnProfile(
-      "analysis",
-      "none",
-      "default",
-      resolveAnalysisSamplingProfile(prompt, true),
-      "attachment+explicit_analysis",
-    );
-  }
-
-  if (hasAttachmentContext) {
-    return makeTurnProfile(
-      "analysis",
-      "none",
-      "default",
-      resolveAnalysisSamplingProfile(prompt, true),
-      "attachment+default_analysis",
-    );
-  }
-
-  return makeTurnProfile("general", "none", "default", "default", null);
-}
-
-/** Convert a character offset to 1-based line:col */
-export function offsetToLineCol(
-  content: string,
-  offset: number,
-): { line: number; col: number } {
-  const before = content.slice(0, offset);
-  const lines = before.split("\n");
-  return { line: lines.length, col: lines[lines.length - 1].length + 1 };
-}
-
-// ─── Types ───
-
-export interface ContentBlock {
-  type: "text" | "tool_use" | "tool_result" | "thinking";
-  // text block
-  text?: string;
-  // tool_use block
-  id?: string;
-  name?: string;
-  input?: any;
-  // tool_result block
-  tool_use_id?: string;
-  content?: any;
-  is_error?: boolean;
-  // thinking block
-  thinking?: string;
-  signature?: string;
-}
-
-export interface AgentStreamMessage {
-  type: "system" | "assistant" | "user" | "result";
-  subtype?: string;
-  session_id?: string;
-  model?: string;
-  cwd?: string;
-  tools?: string[];
-  message?: {
-    content?: ContentBlock[];
-    usage?: { input_tokens: number; output_tokens: number };
-  };
-  usage?: { input_tokens: number; output_tokens: number };
-  cost_usd?: number;
-  duration_ms?: number;
-  duration_api_ms?: number;
-  result?: string;
-  is_error?: boolean;
-  num_turns?: number;
-}
 
 // ─── Tab Types ───
 
@@ -401,36 +66,6 @@ export interface TabState {
   totalInputTokens: number;
   totalOutputTokens: number;
   draft: TabDraft;
-}
-
-export interface ResumableSessionMeta {
-  localSessionId?: string | null;
-  title: string;
-  provider?: string | null;
-  model?: string | null;
-  updatedAt?: string | null;
-  preview?: string | null;
-  messageCount?: number | null;
-  currentObjective?: string | null;
-  currentTarget?: string | null;
-  lastToolActivity?: string | null;
-  pendingState?: string | null;
-  pendingTarget?: string | null;
-}
-
-export interface SessionIdentity {
-  localSessionId: string;
-  title: string;
-  provider?: string | null;
-  model?: string | null;
-  updatedAt?: string | null;
-  preview?: string | null;
-  messageCount?: number | null;
-  currentObjective?: string | null;
-  currentTarget?: string | null;
-  lastToolActivity?: string | null;
-  pendingState?: string | null;
-  pendingTarget?: string | null;
 }
 
 export interface PendingApprovalState {
@@ -520,77 +155,6 @@ interface LocalAgentSessionSummary {
   lastToolActivity?: string | null;
   pendingState?: string | null;
   pendingTarget?: string | null;
-}
-
-function buildSessionIdentity(
-  sessionId: string,
-  metadata?: ResumableSessionMeta | null,
-): SessionIdentity {
-  return {
-    localSessionId: metadata?.localSessionId || sessionId,
-    title: metadata?.title || "Session",
-    provider: metadata?.provider ?? null,
-    model: metadata?.model ?? null,
-    updatedAt: metadata?.updatedAt ?? null,
-    preview: metadata?.preview ?? null,
-    messageCount: metadata?.messageCount ?? null,
-    currentObjective: metadata?.currentObjective ?? null,
-    currentTarget: metadata?.currentTarget ?? null,
-    lastToolActivity: metadata?.lastToolActivity ?? null,
-    pendingState: metadata?.pendingState ?? null,
-    pendingTarget: metadata?.pendingTarget ?? null,
-  };
-}
-
-function summarizeToolTarget(input: unknown): string | null {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return null;
-  }
-  const record = input as Record<string, unknown>;
-  const candidate = ["path", "file_path", "command", "query"]
-    .map((key) => record[key])
-    .find((value) => typeof value === "string" && value.trim().length > 0);
-  return typeof candidate === "string" ? candidate.trim() : null;
-}
-
-function summarizeToolContentTarget(content: unknown): string | null {
-  return getToolResultDisplayTarget(content);
-}
-
-function deriveToolContextFromMessages(messages: AgentStreamMessage[]): {
-  currentWorkLabel: string | null;
-  recentToolActivity: string | null;
-} {
-  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
-    const blocks = messages[messageIndex]?.message?.content ?? [];
-    for (let blockIndex = blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
-      const block = blocks[blockIndex];
-      if (block.type === "tool_result") {
-        const target = summarizeToolContentTarget(block.content);
-        return {
-          currentWorkLabel: target,
-          recentToolActivity: target
-            ? `Latest tool result on ${target}`
-            : "Latest tool result recorded",
-        };
-      }
-      if (block.type === "tool_use") {
-        const target = summarizeToolTarget(block.input);
-        const toolName = block.name ?? "tool";
-        return {
-          currentWorkLabel: target,
-          recentToolActivity: target
-            ? `Last tool: ${toolName} -> ${target}`
-            : `Last tool: ${toolName}`,
-        };
-      }
-    }
-  }
-
-  return {
-    currentWorkLabel: null,
-    recentToolActivity: null,
-  };
 }
 
 /**

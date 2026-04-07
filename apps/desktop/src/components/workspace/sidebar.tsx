@@ -3,53 +3,30 @@ import { getVersion } from "@tauri-apps/api/app";
 import {
   FileTextIcon,
   FolderIcon,
-  HomeIcon,
   FolderPlusIcon,
-  ImageIcon,
+  HomeIcon,
   PlusIcon,
-  Trash2Icon,
-  PencilIcon,
   UploadIcon,
   RefreshCwIcon,
   ListIcon,
-  HashIcon,
   GithubIcon,
-  ChevronRightIcon,
-  ChevronDownIcon,
-  FileCodeIcon,
-  FileIcon,
-  FileSpreadsheetIcon,
-  AppWindowIcon,
-  FlaskConicalIcon,
-  TerminalIcon,
   SettingsIcon,
 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
 import {
   DndContext,
   DragOverlay,
   PointerSensor,
   useSensor,
   useSensors,
-  useDroppable,
-  useDraggable,
   type DragStartEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { useTheme } from "next-themes";
-import { useDocumentStore, type ProjectFile } from "@/stores/document-store";
-import { useHistoryStore } from "@/stores/history-store";
+import { useDocumentStore } from "@/stores/document-store";
 import { cn } from "@/lib/utils";
 import { ZoteroPanel } from "@/components/workspace/zotero-panel";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,131 +41,17 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Input } from "@/components/ui/input";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { useUvSetupStore } from "@/stores/uv-setup-store";
-import { UvSetupDialog } from "@/components/uv-setup";
 import { createLogger } from "@/lib/debug/logger";
 import { SettingsDialog } from "@/components/workspace/settings-dialog";
 import { useSettingsStore } from "@/stores/settings-store";
+import { buildFileTree, DroppableRoot, FileTreeNode } from "./sidebar/FileTree";
+import { parseTableOfContents, OutlinePanelContent } from "./sidebar/OutlinePanel";
+import { NewFileDialog, NewFolderDialog, RenameDialog } from "./sidebar/FileDialogs";
+import { EnvironmentSection } from "./sidebar/EnvironmentSection";
 
 const log = createLogger("sidebar");
-
-// ─── Table of Contents ───
-
-interface TocItem {
-  level: number;
-  title: string;
-  line: number;
-}
-
-function parseTableOfContents(content: string): TocItem[] {
-  const lines = content.split("\n");
-  const toc: TocItem[] = [];
-  const sectionRegex =
-    /\\(section|subsection|subsubsection|chapter|part)\*?\s*\{([^}]*)\}/;
-  const levelMap: Record<string, number> = {
-    part: 0,
-    chapter: 1,
-    section: 2,
-    subsection: 3,
-    subsubsection: 4,
-  };
-  lines.forEach((line, index) => {
-    const match = line.match(sectionRegex);
-    if (match) {
-      const [, type, title] = match;
-      toc.push({
-        level: levelMap[type] ?? 2,
-        title: title.trim(),
-        line: index + 1,
-      });
-    }
-  });
-  return toc;
-}
-
-// ─── File Tree Builder ───
-
-interface TreeNode {
-  name: string;
-  relativePath: string;
-  type: "folder" | "file";
-  file?: ProjectFile;
-  children: TreeNode[];
-}
-
-function buildFileTree(files: ProjectFile[], folders: string[]): TreeNode[] {
-  const root: TreeNode[] = [];
-  const folderMap = new Map<string, TreeNode>();
-
-  function getOrCreateFolder(path: string): TreeNode[] {
-    if (!path) return root;
-    if (folderMap.has(path)) return folderMap.get(path)!.children;
-
-    const parts = path.split("/");
-    const name = parts[parts.length - 1];
-    const parentPath = parts.slice(0, -1).join("/");
-    const parentChildren = getOrCreateFolder(parentPath);
-
-    const folder: TreeNode = {
-      name,
-      relativePath: path,
-      type: "folder",
-      children: [],
-    };
-    folderMap.set(path, folder);
-    parentChildren.push(folder);
-    return folder.children;
-  }
-
-  // Ensure all known folders exist as nodes (including empty ones)
-  for (const folderPath of folders) {
-    getOrCreateFolder(folderPath);
-  }
-
-  for (const file of files) {
-    const parts = file.relativePath.split("/");
-    const fileName = parts[parts.length - 1];
-    const folderPath = parts.slice(0, -1).join("/");
-    const parentChildren = getOrCreateFolder(folderPath);
-
-    parentChildren.push({
-      name: fileName,
-      relativePath: file.relativePath,
-      type: "file",
-      file,
-      children: [],
-    });
-  }
-
-  // Sort: folders first, then alphabetical
-  function sortNodes(nodes: TreeNode[]) {
-    nodes.sort((a, b) => {
-      if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    for (const node of nodes) {
-      if (node.type === "folder") sortNodes(node.children);
-    }
-  }
-  sortNodes(root);
-
-  return root;
-}
-
-// ─── File Icon ───
-
-function getFileIcon(file: ProjectFile) {
-  if (file.type === "image") return <ImageIcon className="size-4 shrink-0" />;
-  if (file.type === "pdf")
-    return <FileSpreadsheetIcon className="size-4 shrink-0" />;
-  if (file.type === "style")
-    return <FileCodeIcon className="size-4 shrink-0" />;
-  if (file.type === "other") return <FileIcon className="size-4 shrink-0" />;
-  return <FileTextIcon className="size-4 shrink-0" />;
-}
 
 // ─── App Version (resolved once from Tauri) ───
 
@@ -224,7 +87,6 @@ export function Sidebar() {
   const requestJumpToPosition = useDocumentStore(
     (s) => s.requestJumpToPosition,
   );
-  const _insertAtCursor = useDocumentStore((s) => s.insertAtCursor);
   const moveFile = useDocumentStore((s) => s.moveFile);
   const moveFolder = useDocumentStore((s) => s.moveFolder);
   const closeProject = useDocumentStore((s) => s.closeProject);
@@ -303,7 +165,6 @@ export function Sidebar() {
                 null);
 
           if (!filesArea || !el || !filesArea.contains(el)) {
-            // Not over the sidebar file tree
             if (nativeDropTargetRef.current !== null) {
               nativeDropTargetRef.current = null;
               setNativeDragOver(null);
@@ -311,7 +172,6 @@ export function Sidebar() {
             return;
           }
 
-          // Walk up from the hovered element to find the closest drop-folder target
           const folderEl = el.closest(
             "[data-drop-folder]",
           ) as HTMLElement | null;
@@ -343,8 +203,6 @@ export function Sidebar() {
             return;
           }
 
-          // Require an explicit drop-folder target. If nothing is matched,
-          // ignore this drop instead of defaulting to project root.
           const folderEl = el.closest(
             "[data-drop-folder]",
           ) as HTMLElement | null;
@@ -360,7 +218,6 @@ export function Sidebar() {
               ? undefined
               : dropFolder;
 
-          // Mark as handled so chat-composer doesn't also process it
           (window as any).__sidebarHandledDrop = true;
           setTimeout(() => {
             (window as any).__sidebarHandledDrop = false;
@@ -403,7 +260,6 @@ export function Sidebar() {
     const handleKeyDown = async (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key !== "v") return;
 
-      // Don't intercept paste in text inputs / editor (contentEditable)
       const active = document.activeElement;
       if (
         active &&
@@ -414,6 +270,7 @@ export function Sidebar() {
         return;
 
       try {
+        const { invoke } = await import("@tauri-apps/api/core");
         const paths = await invoke<string[]>("read_clipboard_file_paths");
         if (paths.length > 0) {
           e.preventDefault();
@@ -428,7 +285,7 @@ export function Sidebar() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [importFiles, pasteTargetFolder]);
 
-  // dnd-kit drag-and-drop (uses PointerSensor — works in Tauri WKWebView)
+  // dnd-kit drag-and-drop
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
   );
@@ -457,8 +314,6 @@ export function Sidebar() {
     };
     setActiveDrag({ id: event.active.id as string, type, name });
 
-    // Track pointer coordinates during drag so we can detect drop over
-    // components that are outside this DndContext (e.g., chat composer).
     const activator = event.activatorEvent as MouseEvent | PointerEvent | null;
     if (activator && typeof activator.clientX === "number") {
       lastPointerRef.current = { x: activator.clientX, y: activator.clientY };
@@ -492,7 +347,6 @@ export function Sidebar() {
 
   const handleDragEnd = useCallback(
     async (event: DragEndEvent) => {
-      // Stop tracking pointer coordinates for this drag.
       if (pointerListenerRef.current) {
         window.removeEventListener("pointermove", pointerListenerRef.current);
         window.removeEventListener("pointerup", pointerListenerRef.current);
@@ -512,7 +366,6 @@ export function Sidebar() {
       const draggedPath = active.id as string;
       const draggedType = (active.data.current as { type: string }).type;
 
-      // File dropped over chat composer: add as chat context instead of moving in tree.
       if (draggedType === "file") {
         const point = lastPointerRef.current;
         if (point) {
@@ -533,13 +386,11 @@ export function Sidebar() {
       const targetId = over.id as string;
       const targetFolder = targetId === "__root__" ? null : targetId;
 
-      // Don't move if same parent
       const draggedParent = draggedPath.includes("/")
         ? draggedPath.substring(0, draggedPath.lastIndexOf("/"))
         : null;
       if (targetFolder === draggedParent) return;
 
-      // Don't move folder into itself or descendant
       if (draggedType === "folder" && targetFolder) {
         if (
           targetFolder === draggedPath ||
@@ -612,7 +463,6 @@ export function Sidebar() {
   );
   const tree = useMemo(() => buildFileTree(files, folders), [files, folders]);
 
-  // Auto-expand parent folders of the active file so it stays visible
   useEffect(() => {
     if (!activeFileId) return;
     const parts = activeFileId.split("/");
@@ -658,8 +508,7 @@ export function Sidebar() {
     [activeFileContent, requestJumpToPosition],
   );
 
-  // Check if a name already exists in the given folder
-  // Case-insensitive on macOS/Windows (default case-insensitive filesystems)
+  // Name collision check
   const isCaseInsensitiveFs =
     navigator.platform.startsWith("Mac") ||
     navigator.platform.startsWith("Win");
@@ -685,7 +534,6 @@ export function Sidebar() {
       setNameError("A file or folder with this name already exists");
       return;
     }
-    // Auto-append .tex if no extension provided
     const finalName = /\.\w+$/.test(name) ? name : `${name}.tex`;
     const lower = finalName.toLowerCase();
     const type: "tex" | "image" = /\.(png|jpg|jpeg|gif|svg|bmp|webp)$/.test(
@@ -756,7 +604,6 @@ export function Sidebar() {
   const handleRename = () => {
     const name = renameValue.trim();
     if (!renameFileId || !name) return;
-    // Check duplicate: find the parent folder of the file being renamed
     const file = files.find((f) => f.id === renameFileId);
     const parentFolder = file?.relativePath.includes("/")
       ? file.relativePath.substring(0, file.relativePath.lastIndexOf("/"))
@@ -809,7 +656,7 @@ export function Sidebar() {
 
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-      {/* Header — padded top for macOS overlay titlebar */}
+      {/* Header */}
       <div className="relative flex h-[calc(48px+var(--titlebar-height))] items-center justify-center border-sidebar-border border-b px-3 pt-[var(--titlebar-height)]">
         <div className="flex flex-col items-center">
           <span className="font-semibold text-sm">ClaudePrism</span>
@@ -964,23 +811,7 @@ export function Sidebar() {
               <span className="font-medium text-xs">Outline</span>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-1">
-              {toc.length > 0 ? (
-                toc.map((item, index) => (
-                  <button
-                    key={index}
-                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm transition-colors hover:bg-sidebar-accent/50"
-                    style={{ paddingLeft: `${(item.level - 1) * 12 + 8}px` }}
-                    onClick={() => handleTocClick(item.line)}
-                  >
-                    <HashIcon className="size-3 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{item.title}</span>
-                  </button>
-                ))
-              ) : (
-                <div className="px-2 py-1 text-muted-foreground text-xs">
-                  No sections found
-                </div>
-              )}
+              <OutlinePanelContent toc={toc} onTocClick={handleTocClick} />
             </div>
           </div>
         </Panel>
@@ -995,7 +826,7 @@ export function Sidebar() {
         </Panel>
       </PanelGroup>
 
-      {/* Environment section — Python + Skills */}
+      {/* Environment section */}
       <EnvironmentSection projectPath={projectRoot} />
 
       {/* Footer */}
@@ -1024,525 +855,44 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* New File Dialog */}
-      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              New File{addDialogFolder ? ` in ${addDialogFolder}` : ""}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 py-4">
-            <Input
-              placeholder="filename.tex"
-              value={newFileName}
-              onChange={(e) => {
-                setNewFileName(e.target.value);
-                setNameError("");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleAddFile();
-              }}
-              autoFocus
-            />
-            {nameError && (
-              <p className="text-destructive text-xs">{nameError}</p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAddDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleAddFile} disabled={!newFileName.trim()}>
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Dialogs */}
+      <NewFileDialog
+        open={addDialogOpen}
+        onOpenChange={setAddDialogOpen}
+        folder={addDialogFolder}
+        fileName={newFileName}
+        onFileNameChange={setNewFileName}
+        nameError={nameError}
+        onNameErrorChange={setNameError}
+        onSubmit={handleAddFile}
+      />
 
-      {/* New Folder Dialog */}
-      <Dialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              New Folder{folderDialogParent ? ` in ${folderDialogParent}` : ""}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 py-4">
-            <Input
-              placeholder="folder name"
-              value={newFolderName}
-              onChange={(e) => {
-                setNewFolderName(e.target.value);
-                setNameError("");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreateFolder();
-              }}
-              autoFocus
-            />
-            {nameError && (
-              <p className="text-destructive text-xs">{nameError}</p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setFolderDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCreateFolder}
-              disabled={!newFolderName.trim()}
-            >
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NewFolderDialog
+        open={folderDialogOpen}
+        onOpenChange={setFolderDialogOpen}
+        parent={folderDialogParent}
+        folderName={newFolderName}
+        onFolderNameChange={setNewFolderName}
+        nameError={nameError}
+        onNameErrorChange={setNameError}
+        onSubmit={handleCreateFolder}
+      />
 
-      {/* Rename Dialog */}
-      <Dialog open={renameDialogOpen} onOpenChange={setRenameDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Rename</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 py-4">
-            <Input
-              value={renameValue}
-              onChange={(e) => {
-                setRenameValue(e.target.value);
-                setNameError("");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleRename();
-              }}
-              autoFocus
-            />
-            {nameError && (
-              <p className="text-destructive text-xs">{nameError}</p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setRenameDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button onClick={handleRename}>Rename</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RenameDialog
+        open={renameDialogOpen}
+        onOpenChange={setRenameDialogOpen}
+        renameValue={renameValue}
+        onRenameValueChange={setRenameValue}
+        nameError={nameError}
+        onNameErrorChange={setNameError}
+        onSubmit={handleRename}
+      />
 
       <SettingsDialog
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
         projectRoot={projectRoot}
       />
-    </div>
-  );
-}
-
-// ─── File Tree Node ───
-
-// ─── dnd-kit helpers ───
-
-function DroppableRoot({
-  children,
-  nativeDragOver,
-}: {
-  children: React.ReactNode;
-  nativeDragOver?: boolean;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id: "__root__" });
-  return (
-    <div
-      ref={setNodeRef}
-      data-drop-folder="__root__"
-      className={cn(
-        "min-h-0 flex-1 overflow-y-auto p-1",
-        (isOver || nativeDragOver) && "bg-accent/30",
-      )}
-    >
-      {children}
-    </div>
-  );
-}
-
-function DroppableFolder({
-  id,
-  children,
-  nativeDragOver,
-}: {
-  id: string;
-  children: React.ReactNode;
-  nativeDragOver?: boolean;
-}) {
-  const { setNodeRef, isOver } = useDroppable({ id });
-  return (
-    <div
-      ref={setNodeRef}
-      data-drop-folder={id}
-      className={cn((isOver || nativeDragOver) && "rounded-md bg-accent/30")}
-    >
-      {children}
-    </div>
-  );
-}
-
-// ─── File Tree Node ───
-
-interface FileTreeNodeProps {
-  node: TreeNode;
-  depth: number;
-  activeFileId: string;
-  expandedFolders: Set<string>;
-  onToggleFolder: (path: string) => void;
-  onSelectFile: (id: string) => void;
-  onNewFile: (folder?: string) => void;
-  onNewFolder: (parent?: string) => void;
-  onImport: (folder?: string) => void;
-  onRename: (id: string, name: string) => void;
-  onDelete: (id: string) => void;
-  onDeleteFolder: (folderPath: string) => void;
-  fileCount: number;
-  nativeDragOver?: string | null;
-}
-
-function FileTreeNode({
-  node,
-  depth,
-  activeFileId,
-  expandedFolders,
-  onToggleFolder,
-  onSelectFile,
-  onNewFile,
-  onNewFolder,
-  onImport,
-  onRename,
-  onDelete,
-  onDeleteFolder,
-  fileCount,
-  nativeDragOver,
-}: FileTreeNodeProps) {
-  const isExpanded = expandedFolders.has(node.relativePath);
-
-  if (node.type === "folder") {
-    return (
-      <DroppableFolder
-        id={node.relativePath}
-        nativeDragOver={nativeDragOver === node.relativePath}
-      >
-        <DraggableItem id={node.relativePath} type="folder" name={node.name}>
-          <ContextMenu>
-            <ContextMenuTrigger asChild>
-              <button
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm transition-colors hover:bg-sidebar-accent/50"
-                style={{ paddingLeft: `${depth * 16 + 4}px` }}
-                onClick={() => onToggleFolder(node.relativePath)}
-              >
-                {isExpanded ? (
-                  <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <FolderIcon className="size-4 shrink-0" />
-                <span className="truncate">{node.name}</span>
-              </button>
-            </ContextMenuTrigger>
-            <ContextMenuContent>
-              <ContextMenuItem onClick={() => onNewFile(node.relativePath)}>
-                <FileTextIcon className="mr-2 size-4" />
-                New File Here
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => onNewFolder(node.relativePath)}>
-                <FolderPlusIcon className="mr-2 size-4" />
-                New Folder
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => onImport(node.relativePath)}>
-                <UploadIcon className="mr-2 size-4" />
-                Import File Here
-              </ContextMenuItem>
-              <ContextMenuSeparator />
-              <ContextMenuItem
-                onClick={() => onRename(node.relativePath, node.name)}
-              >
-                <PencilIcon className="mr-2 size-4" />
-                Rename
-              </ContextMenuItem>
-              <ContextMenuItem
-                variant="destructive"
-                onClick={() => onDeleteFolder(node.relativePath)}
-              >
-                <Trash2Icon className="mr-2 size-4" />
-                Delete
-              </ContextMenuItem>
-            </ContextMenuContent>
-          </ContextMenu>
-        </DraggableItem>
-        {isExpanded &&
-          node.children.map((child) => (
-            <FileTreeNode
-              key={child.relativePath}
-              node={child}
-              depth={depth + 1}
-              activeFileId={activeFileId}
-              expandedFolders={expandedFolders}
-              onToggleFolder={onToggleFolder}
-              onSelectFile={onSelectFile}
-              onNewFile={onNewFile}
-              onNewFolder={onNewFolder}
-              onImport={onImport}
-              onRename={onRename}
-              onDelete={onDelete}
-              onDeleteFolder={onDeleteFolder}
-              fileCount={fileCount}
-              nativeDragOver={nativeDragOver}
-            />
-          ))}
-      </DroppableFolder>
-    );
-  }
-
-  // File node
-  const file = node.file!;
-  return (
-    <DraggableItem id={file.relativePath} type="file" name={node.name}>
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          <button
-            className={cn(
-              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-              file.id === activeFileId
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "hover:bg-sidebar-accent/50",
-            )}
-            style={{ paddingLeft: `${depth * 16 + 8}px` }}
-            onClick={() => {
-              useHistoryStore.getState().stopReview();
-              onSelectFile(file.id);
-            }}
-          >
-            {getFileIcon(file)}
-            <span className="min-w-0 flex-1 truncate">{node.name}</span>
-            {file.isDirty && (
-              <span
-                className="ml-auto size-2 shrink-0 rounded-full bg-blue-500"
-                title="Modified"
-              />
-            )}
-          </button>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={() => onRename(file.id, file.name)}>
-            <PencilIcon className="mr-2 size-4" />
-            Rename
-          </ContextMenuItem>
-          <ContextMenuItem
-            variant="destructive"
-            onClick={() => onDelete(file.id)}
-            disabled={fileCount <= 1}
-          >
-            <Trash2Icon className="mr-2 size-4" />
-            Delete
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-    </DraggableItem>
-  );
-}
-
-// ─── Environment Section (Python + Skills) ───
-
-interface SkillsStatus {
-  installed: boolean;
-  skill_count: number;
-  location: string;
-}
-
-function EnvironmentSection({ projectPath }: { projectPath: string | null }) {
-  // ── Python / uv ──
-  const venvReady = useUvSetupStore((s) => s.venvReady);
-  const uvStatus = useUvSetupStore((s) => s.status);
-  const [showUvDialog, setShowUvDialog] = useState(false);
-
-  // ── Scientific Skills ──
-  const [skillsStatus, setSkillsStatus] = useState<SkillsStatus | null>(null);
-  const [showOnboarding, setShowOnboarding] = useState(false);
-
-  const checkSkillsStatus = useCallback(async () => {
-    try {
-      const globalStatus = await invoke<SkillsStatus>(
-        "check_skills_installed",
-        {
-          projectPath: null,
-        },
-      );
-      if (globalStatus.installed) {
-        setSkillsStatus(globalStatus);
-        return;
-      }
-      if (projectPath) {
-        const projectStatus = await invoke<SkillsStatus>(
-          "check_skills_installed",
-          {
-            projectPath,
-          },
-        );
-        setSkillsStatus(projectStatus);
-      } else {
-        setSkillsStatus(globalStatus);
-      }
-    } catch {
-      // Ignore errors silently
-    }
-  }, [projectPath]);
-
-  useEffect(() => {
-    checkSkillsStatus();
-  }, [checkSkillsStatus]);
-
-  // Lazy import onboarding
-  const [OnboardingComponent, setOnboardingComponent] =
-    useState<React.ComponentType<{
-      onClose: () => void;
-    }> | null>(null);
-
-  useEffect(() => {
-    if (showOnboarding && !OnboardingComponent) {
-      import(
-        "@/components/scientific-skills/scientific-skills-onboarding"
-      ).then((mod) =>
-        setOnboardingComponent(() => mod.ScientificSkillsOnboarding),
-      );
-    }
-  }, [showOnboarding, OnboardingComponent]);
-
-  const pythonLabel = venvReady
-    ? "Active"
-    : uvStatus === "not-installed"
-      ? "Not installed"
-      : uvStatus === "ready"
-        ? "No venv"
-        : "";
-  const skillsLabel = skillsStatus?.installed
-    ? `${skillsStatus.skill_count} skills`
-    : "Not installed";
-
-  return (
-    <>
-      <div className="border-sidebar-border border-t">
-        <div className="flex h-8 shrink-0 items-center justify-center gap-2 px-3">
-          <AppWindowIcon className="size-3.5 text-muted-foreground" />
-          <span className="font-medium text-xs">Environment</span>
-        </div>
-        <div className="space-y-0.5 px-1 pb-1.5">
-          {/* Python / uv row */}
-          <button
-            className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm transition-colors hover:bg-sidebar-accent/50"
-            onClick={() => setShowUvDialog(true)}
-          >
-            <TerminalIcon
-              className={cn(
-                "size-3.5 shrink-0",
-                venvReady ? "text-foreground" : "text-muted-foreground",
-              )}
-            />
-            <span className="min-w-0 flex-1 truncate text-xs">Python</span>
-            <span
-              className={cn(
-                "shrink-0 text-xs",
-                venvReady ? "text-foreground" : "text-muted-foreground",
-              )}
-            >
-              {pythonLabel}
-            </span>
-          </button>
-          {/* Scientific Skills row */}
-          <button
-            className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm transition-colors hover:bg-sidebar-accent/50"
-            onClick={() => setShowOnboarding(true)}
-          >
-            <FlaskConicalIcon
-              className={cn(
-                "size-3.5 shrink-0",
-                skillsStatus?.installed
-                  ? "text-foreground"
-                  : "text-muted-foreground",
-              )}
-            />
-            <span className="min-w-0 flex-1 truncate text-xs">Skills</span>
-            <span
-              className={cn(
-                "shrink-0 text-xs",
-                skillsStatus?.installed
-                  ? "text-foreground"
-                  : "text-muted-foreground",
-              )}
-            >
-              {skillsLabel}
-            </span>
-          </button>
-        </div>
-      </div>
-
-      <UvSetupDialog
-        open={showUvDialog}
-        onClose={() => setShowUvDialog(false)}
-      />
-
-      {showOnboarding && OnboardingComponent && (
-        <OnboardingComponent
-          onClose={() => {
-            setShowOnboarding(false);
-            checkSkillsStatus();
-          }}
-        />
-      )}
-    </>
-  );
-}
-
-// ─── Draggable wrapper ───
-
-function DraggableItem({
-  id,
-  type,
-  name,
-  children,
-}: {
-  id: string;
-  type: "file" | "folder";
-  name: string;
-  children: React.ReactNode;
-}) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id,
-    data: { type, name },
-  });
-
-  // Wrap listeners to log pointer events
-  const wrappedListeners = listeners
-    ? Object.fromEntries(
-        Object.entries(listeners).map(([key, handler]) => [
-          key,
-          (e: React.PointerEvent) => {
-            (handler as (e: React.PointerEvent) => void)(e);
-          },
-        ]),
-      )
-    : {};
-
-  return (
-    <div
-      ref={setNodeRef}
-      {...wrappedListeners}
-      {...attributes}
-      style={{ opacity: isDragging ? 0.4 : 1 }}
-    >
-      {children}
     </div>
   );
 }

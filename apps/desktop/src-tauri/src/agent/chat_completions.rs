@@ -24,8 +24,7 @@ use super::turn_engine::{
 use super::{
     agent_instructions_for_request, max_rounds_for_task, resolve_turn_profile, tool_choice_for_task,
 };
-use super::{AgentStatus, AgentTurnDescriptor};
-const AGENT_CANCELLED_MESSAGE: &str = "Agent run cancelled by user.";
+use super::{AgentStatus, AgentTurnDescriptor, AGENT_CANCELLED_MESSAGE};
 
 #[derive(Debug, Clone, Default)]
 struct ChatCompletionsToolCallBuilder {

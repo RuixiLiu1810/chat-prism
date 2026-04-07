@@ -40,6 +40,15 @@ pub struct TurnBudget {
     pub abort_rx: Option<watch::Receiver<bool>>,
 }
 
+fn derive_turn_output_budget(max_rounds: u32, per_call_max_output_tokens: u32) -> u32 {
+    // The provider max token value is per request, while one local turn can span
+    // multiple tool rounds. Scale the turn budget conservatively so long-running
+    // edit/document turns do not fail prematurely on the first few rounds.
+    let round_multiplier = max_rounds.clamp(1, 4);
+    let scaled = per_call_max_output_tokens.saturating_mul(round_multiplier);
+    scaled.clamp(8_192, 32_768)
+}
+
 impl TurnBudget {
     pub fn new(
         max_rounds: u32,
@@ -48,7 +57,8 @@ impl TurnBudget {
     ) -> Self {
         Self {
             max_rounds,
-            max_output_tokens,
+            max_output_tokens: max_output_tokens
+                .map(|per_call| derive_turn_output_budget(max_rounds, per_call)),
             consumed_output_tokens: 0,
             abort_rx,
         }
