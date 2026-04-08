@@ -1,8 +1,7 @@
 export { GeneralTab } from "./GeneralTab";
 export { CitationTab } from "./CitationTab";
-export { ProvidersTab } from "./ProvidersTab";
+export { AIAssistantTab } from "./AIAssistantTab";
 export { AdvancedTab } from "./AdvancedTab";
-export { IoTab } from "./IoTab";
 export {
   type QueryMode,
   type AgentProvider,

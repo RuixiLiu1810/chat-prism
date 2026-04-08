@@ -22,9 +22,8 @@ import {
 import {
   GeneralTab,
   CitationTab,
-  ProvidersTab,
+  AIAssistantTab,
   AdvancedTab,
-  IoTab,
   AGENT_PROVIDER_DEFAULTS,
   QUERY_MODE_PRESETS,
   inferNearestQueryMode,
@@ -994,21 +993,18 @@ export function SettingsDialog({
 
         <div className="min-h-0 flex-1 overflow-hidden px-5 py-3.5">
           <Tabs defaultValue="general" className="flex h-full min-h-0 flex-col">
-            <TabsList className="grid w-full shrink-0 grid-cols-5 rounded-lg border border-sidebar-border/70 bg-sidebar-accent/35 p-1">
+            <TabsList className="grid w-full shrink-0 grid-cols-4 rounded-lg border border-sidebar-border/70 bg-sidebar-accent/35 p-1">
               <TabsTrigger value="general" className="text-xs">
                 General
+              </TabsTrigger>
+              <TabsTrigger value="assistant" className="text-xs">
+                AI Assistant
               </TabsTrigger>
               <TabsTrigger value="citation" className="text-xs">
                 Citation
               </TabsTrigger>
-              <TabsTrigger value="integrations" className="text-xs">
-                Providers
-              </TabsTrigger>
               <TabsTrigger value="advanced" className="text-xs">
                 Advanced
-              </TabsTrigger>
-              <TabsTrigger value="io" className="text-xs">
-                Import/Export
               </TabsTrigger>
             </TabsList>
 
@@ -1049,7 +1045,6 @@ export function SettingsDialog({
                 saveQueryMode={saveQueryMode}
                 llmEnabled={llmEnabled}
                 saveLlmEnabled={saveLlmEnabled}
-                llmApiKeyConfigured={secretsMeta.integrations.llmQuery.apiKeyConfigured}
                 toggleProjectOverride={toggleProjectOverride}
                 queryExecutionTopN={queryExecutionTopN}
                 setQueryExecutionTopN={setQueryExecutionTopN}
@@ -1062,65 +1057,10 @@ export function SettingsDialog({
                 queryExecutionHitScoreThreshold={queryExecutionHitScoreThreshold}
                 setQueryExecutionHitScoreThreshold={setQueryExecutionHitScoreThreshold}
                 saveQueryExecutionField={saveQueryExecutionField}
-              />
-            </TabsContent>
-
-            <TabsContent
-              value="integrations"
-              className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1"
-            >
-              <ProvidersTab
-                effective={effective}
+                patchGlobal={patchGlobal}
+                projectRoot={projectRoot}
                 secretsMeta={secretsMeta}
                 isSaving={isSaving}
-                projectRoot={projectRoot}
-                hasProjectRoot={hasProjectRoot}
-                patchGlobal={patchGlobal}
-                patchSecret={patchSecret}
-                agentRuntime={agentRuntime}
-                agentProvider={agentProvider}
-                agentModel={agentModel}
-                setAgentModel={setAgentModel}
-                agentBaseUrl={agentBaseUrl}
-                setAgentBaseUrl={setAgentBaseUrl}
-                agentRuntimeMode={agentRuntimeMode}
-                saveAgentRuntime={saveAgentRuntime}
-                saveAgentProvider={saveAgentProvider}
-                saveAgentModel={saveAgentModel}
-                saveAgentBaseUrl={saveAgentBaseUrl}
-                agentApiKeyInput={agentApiKeyInput}
-                setAgentApiKeyInput={setAgentApiKeyInput}
-                showAgentApiKey={showAgentApiKey}
-                setShowAgentApiKey={setShowAgentApiKey}
-                saveAgentApiKey={saveAgentApiKey}
-                agentEditStableTemperature={agentEditStableTemperature}
-                setAgentEditStableTemperature={setAgentEditStableTemperature}
-                agentEditStableTopP={agentEditStableTopP}
-                setAgentEditStableTopP={setAgentEditStableTopP}
-                agentEditStableMaxTokens={agentEditStableMaxTokens}
-                setAgentEditStableMaxTokens={setAgentEditStableMaxTokens}
-                agentAnalysisTemperature={agentAnalysisTemperature}
-                setAgentAnalysisTemperature={setAgentAnalysisTemperature}
-                agentAnalysisTopP={agentAnalysisTopP}
-                setAgentAnalysisTopP={setAgentAnalysisTopP}
-                agentAnalysisMaxTokens={agentAnalysisMaxTokens}
-                setAgentAnalysisMaxTokens={setAgentAnalysisMaxTokens}
-                agentAnalysisDeepTemperature={agentAnalysisDeepTemperature}
-                setAgentAnalysisDeepTemperature={setAgentAnalysisDeepTemperature}
-                agentAnalysisDeepTopP={agentAnalysisDeepTopP}
-                setAgentAnalysisDeepTopP={setAgentAnalysisDeepTopP}
-                agentAnalysisDeepMaxTokens={agentAnalysisDeepMaxTokens}
-                setAgentAnalysisDeepMaxTokens={setAgentAnalysisDeepMaxTokens}
-                agentChatTemperature={agentChatTemperature}
-                setAgentChatTemperature={setAgentChatTemperature}
-                agentChatTopP={agentChatTopP}
-                setAgentChatTopP={setAgentChatTopP}
-                agentChatMaxTokens={agentChatMaxTokens}
-                setAgentChatMaxTokens={setAgentChatMaxTokens}
-                saveAgentSamplingProfiles={saveAgentSamplingProfiles}
-                isRunningAgentSmoke={isRunningAgentSmoke}
-                agentSmokeResult={agentSmokeResult}
-                handleRunAgentSmoke={handleRunAgentSmoke}
                 apiKeyInput={apiKeyInput}
                 setApiKeyInput={setApiKeyInput}
                 showSemanticApiKey={showSemanticApiKey}
@@ -1149,10 +1089,61 @@ export function SettingsDialog({
                 saveQueryEmbeddingEnabled={saveQueryEmbeddingEnabled}
                 saveQueryEmbeddingProvider={saveQueryEmbeddingProvider}
                 saveQueryEmbeddingTimeoutMs={saveQueryEmbeddingTimeoutMs}
-                isTestingProviders={isTestingProviders}
-                providerConnectivity={providerConnectivity}
-                handleTestProviderConnectivity={handleTestProviderConnectivity}
-                connectivityBadge={connectivityBadge}
+              />
+            </TabsContent>
+
+            <TabsContent
+              value="assistant"
+              className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1"
+            >
+              <AIAssistantTab
+                agentRuntime={agentRuntime}
+                agentProvider={agentProvider}
+                agentModel={agentModel}
+                setAgentModel={setAgentModel}
+                agentBaseUrl={agentBaseUrl}
+                setAgentBaseUrl={setAgentBaseUrl}
+                agentRuntimeMode={agentRuntimeMode}
+                saveAgentRuntime={saveAgentRuntime}
+                saveAgentProvider={saveAgentProvider}
+                saveAgentModel={saveAgentModel}
+                saveAgentBaseUrl={saveAgentBaseUrl}
+                agentApiKeyInput={agentApiKeyInput}
+                setAgentApiKeyInput={setAgentApiKeyInput}
+                showAgentApiKey={showAgentApiKey}
+                setShowAgentApiKey={setShowAgentApiKey}
+                saveAgentApiKey={saveAgentApiKey}
+                agentApiKeyConfigured={secretsMeta.integrations.agent.apiKeyConfigured}
+                isSaving={isSaving}
+                agentEditStableTemperature={agentEditStableTemperature}
+                setAgentEditStableTemperature={setAgentEditStableTemperature}
+                agentEditStableTopP={agentEditStableTopP}
+                setAgentEditStableTopP={setAgentEditStableTopP}
+                agentEditStableMaxTokens={agentEditStableMaxTokens}
+                setAgentEditStableMaxTokens={setAgentEditStableMaxTokens}
+                agentAnalysisTemperature={agentAnalysisTemperature}
+                setAgentAnalysisTemperature={setAgentAnalysisTemperature}
+                agentAnalysisTopP={agentAnalysisTopP}
+                setAgentAnalysisTopP={setAgentAnalysisTopP}
+                agentAnalysisMaxTokens={agentAnalysisMaxTokens}
+                setAgentAnalysisMaxTokens={setAgentAnalysisMaxTokens}
+                agentAnalysisDeepTemperature={agentAnalysisDeepTemperature}
+                setAgentAnalysisDeepTemperature={setAgentAnalysisDeepTemperature}
+                agentAnalysisDeepTopP={agentAnalysisDeepTopP}
+                setAgentAnalysisDeepTopP={setAgentAnalysisDeepTopP}
+                agentAnalysisDeepMaxTokens={agentAnalysisDeepMaxTokens}
+                setAgentAnalysisDeepMaxTokens={setAgentAnalysisDeepMaxTokens}
+                agentChatTemperature={agentChatTemperature}
+                setAgentChatTemperature={setAgentChatTemperature}
+                agentChatTopP={agentChatTopP}
+                setAgentChatTopP={setAgentChatTopP}
+                agentChatMaxTokens={agentChatMaxTokens}
+                setAgentChatMaxTokens={setAgentChatMaxTokens}
+                saveAgentSamplingProfiles={saveAgentSamplingProfiles}
+                hasProjectRoot={hasProjectRoot}
+                isRunningAgentSmoke={isRunningAgentSmoke}
+                agentSmokeResult={agentSmokeResult}
+                handleRunAgentSmoke={handleRunAgentSmoke}
               />
             </TabsContent>
 
@@ -1164,12 +1155,11 @@ export function SettingsDialog({
                 effective={effective}
                 patchGlobal={patchGlobal}
                 projectRoot={projectRoot}
-              />
-            </TabsContent>
-
-            <TabsContent value="io" className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
-              <IoTab
                 isSaving={isSaving}
+                isTestingProviders={isTestingProviders}
+                providerConnectivity={providerConnectivity}
+                handleTestProviderConnectivity={handleTestProviderConnectivity}
+                connectivityBadge={connectivityBadge}
                 importText={importText}
                 setImportText={setImportText}
                 handleExport={handleExport}
