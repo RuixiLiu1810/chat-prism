@@ -19,6 +19,7 @@ import { ApprovalCard } from "./approval-card";
 import { ChatMessages } from "./chat-messages";
 import { ChatComposer } from "./chat-composer";
 import { ChatTabBar } from "./chat-tab-bar";
+import { WorkflowCheckpointCard } from "./workflow-checkpoint-card";
 
 const MIN_HEIGHT = 150;
 const DEFAULT_HEIGHT = 360;
@@ -72,6 +73,10 @@ export function AgentChatDrawer() {
   const pendingApproval = useAgentChatStore((s) => {
     const active = s.tabs.find((t) => t.id === s.activeTabId);
     return active?.pendingApproval ?? null;
+  });
+  const pendingWorkflowCheckpoint = useAgentChatStore((s) => {
+    const active = s.tabs.find((t) => t.id === s.activeTabId);
+    return active?.pendingWorkflowCheckpoint ?? null;
   });
   const resolvedWorkLabel = currentWorkLabel || activeSessionMeta?.currentTarget || activeSessionMeta?.pendingTarget || null;
   const resolvedToolActivity =
@@ -405,6 +410,9 @@ export function AgentChatDrawer() {
           <ChatMessages />
         </div>
 
+        {pendingWorkflowCheckpoint ? (
+          <WorkflowCheckpointCard checkpoint={pendingWorkflowCheckpoint} />
+        ) : null}
         {pendingApproval ? <ApprovalCard approval={pendingApproval} /> : null}
 
         {/* Composer */}

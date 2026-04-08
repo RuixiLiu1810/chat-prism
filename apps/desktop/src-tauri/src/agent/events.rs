@@ -23,6 +23,9 @@ pub enum AgentEventPayload {
     ReviewArtifactReady(AgentReviewArtifactReadyEvent),
     ToolResumed(AgentToolResumedEvent),
     TurnResumed(AgentTurnResumedEvent),
+    WorkflowCheckpointRequested(AgentWorkflowCheckpointRequestedEvent),
+    WorkflowCheckpointApproved(AgentWorkflowCheckpointApprovedEvent),
+    WorkflowCheckpointRejected(AgentWorkflowCheckpointRejectedEvent),
     Error(AgentErrorEvent),
 }
 
@@ -112,6 +115,32 @@ pub struct AgentToolResumedEvent {
 #[serde(rename_all = "camelCase")]
 pub struct AgentTurnResumedEvent {
     pub local_session_id: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWorkflowCheckpointRequestedEvent {
+    pub workflow_type: String,
+    pub stage: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWorkflowCheckpointApprovedEvent {
+    pub workflow_type: String,
+    pub from_stage: String,
+    pub to_stage: String,
+    pub completed: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWorkflowCheckpointRejectedEvent {
+    pub workflow_type: String,
+    pub stage: String,
     pub message: String,
 }
 

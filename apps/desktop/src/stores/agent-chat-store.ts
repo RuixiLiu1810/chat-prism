@@ -58,6 +58,8 @@ export interface TabState {
   currentWorkLabel: string | null;
   recentToolActivity: string | null;
   pendingApproval: PendingApprovalState | null;
+  pendingWorkflowCheckpoint: PendingWorkflowCheckpointState | null;
+  workflowState: WorkflowState | null;
   messages: AgentStreamMessage[];
   isStreaming: boolean;
   error: string | null;
@@ -77,6 +79,18 @@ export interface PendingApprovalState {
   reviewReady: boolean;
   canResume: boolean;
   message: string;
+}
+
+export interface PendingWorkflowCheckpointState {
+  workflowType: string;
+  stage: string;
+  message: string;
+}
+
+export interface WorkflowState {
+  workflowType: string;
+  stage: string;
+  completed: boolean;
 }
 
 /** Fields that are projected from the active tab to top-level state */
@@ -100,6 +114,8 @@ function makeDefaultTab(id: string): TabState {
     currentWorkLabel: null,
     recentToolActivity: null,
     pendingApproval: null,
+    pendingWorkflowCheckpoint: null,
+    workflowState: null,
     messages: [],
     isStreaming: false,
     error: null,
@@ -133,6 +149,38 @@ function resolveClaudeModel(
   selectedModel: "sonnet" | "opus" | "haiku" | "opusplan",
 ): string {
   return selectedModel;
+}
+
+function looksLikePaperDraftingIntent(prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  const englishSignals = [
+    "draft section",
+    "draft introduction",
+    "draft methods",
+    "draft results",
+    "draft discussion",
+    "write introduction",
+    "write methods",
+    "write discussion",
+    "generate abstract",
+    "manuscript",
+    "paper draft",
+  ];
+  const chineseSignals = [
+    "写引言",
+    "撰写引言",
+    "撰写方法",
+    "撰写结果",
+    "撰写讨论",
+    "草拟讨论",
+    "写摘要",
+    "论文草稿",
+    "论文写作",
+  ];
+  return (
+    englishSignals.some((needle) => lower.includes(needle)) ||
+    chineseSignals.some((needle) => prompt.includes(needle))
+  );
 }
 
 interface ClaudeSessionInfo {
@@ -230,6 +278,10 @@ interface AgentChatState {
     sessionId: string,
     metadata?: ResumableSessionMeta,
   ) => Promise<void>;
+  checkpointWorkflow: (
+    decision: "approve" | "request_changes",
+    feedback?: string,
+  ) => Promise<void>;
   setToolApproval: (
     toolName: string,
     decision: "allow_once" | "allow_session" | "deny_session",
@@ -271,6 +323,11 @@ interface AgentChatState {
     tabId: string,
     pendingApproval: PendingApprovalState | null,
   ) => void;
+  _setPendingWorkflowCheckpoint: (
+    tabId: string,
+    pendingWorkflowCheckpoint: PendingWorkflowCheckpointState | null,
+  ) => void;
+  _setWorkflowState: (tabId: string, workflowState: WorkflowState | null) => void;
   _cancelledByUser: boolean;
 }
 
@@ -452,6 +509,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
         ],
         currentWorkLabel: primaryContext?.filePath || activeFile?.relativePath || null,
         pendingApproval: null,
+        pendingWorkflowCheckpoint: null,
         isStreaming: true,
         error: null,
         statusStage: "starting",
@@ -569,11 +627,19 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
         hasActiveFile: hasActiveFileContext,
         hasAttachmentContext,
       });
+    const existingWorkflow = activeTab?.workflowState;
+    const usePaperDraftingWorkflow =
+      runtime === "local_agent" &&
+      (((existingWorkflow?.workflowType || "").toLowerCase() === "paper_drafting" &&
+        !existingWorkflow?.completed) ||
+        turnProfile.taskKind === "paper_drafting" ||
+        looksLikePaperDraftingIntent(userPrompt));
 
     log.info("invoking chat runtime", {
       promptLength: prompt.length,
       mode: sessionId ? "resume" : "new",
       runtime,
+      workflow: usePaperDraftingWorkflow ? "paper_drafting" : "none",
     });
 
     try {
@@ -597,23 +663,41 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
           });
         }
       } else {
-        const localSessionId = sessionId
-          ? await invoke<string>("agent_continue_turn", {
-              projectPath,
-              prompt,
-              tabId: activeTabId,
-              model: null,
-              localSessionId: sessionId,
-              previousResponseId: null,
-              turnProfile,
-            })
-          : await invoke<string>("agent_start_turn", {
-              projectPath,
-              prompt,
-              tabId: activeTabId,
-              model: null,
-              turnProfile,
-            });
+        const localSessionId = usePaperDraftingWorkflow
+          ? existingWorkflow
+            ? await invoke<string>("agent_continue_workflow", {
+                projectPath,
+                prompt,
+                tabId: activeTabId,
+                model: null,
+                localSessionId: sessionId,
+                turnProfile,
+              })
+            : await invoke<string>("agent_start_workflow", {
+                projectPath,
+                prompt,
+                tabId: activeTabId,
+                model: null,
+                workflowType: "paper_drafting",
+                turnProfile,
+              })
+          : sessionId
+            ? await invoke<string>("agent_continue_turn", {
+                projectPath,
+                prompt,
+                tabId: activeTabId,
+                model: null,
+                localSessionId: sessionId,
+                previousResponseId: null,
+                turnProfile,
+              })
+            : await invoke<string>("agent_start_turn", {
+                projectPath,
+                prompt,
+                tabId: activeTabId,
+                model: null,
+                turnProfile,
+              });
         if (localSessionId) {
           get()._setSessionId(activeTabId, localSessionId);
           await get().refreshSessionMeta(activeTabId, localSessionId);
@@ -669,6 +753,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
       applyTabUpdate(s, activeTabId, {
         isStreaming: false,
         pendingApproval: null,
+        pendingWorkflowCheckpoint: null,
         statusStage: "cancelled",
         statusMessage: "Agent run cancelled.",
       }),
@@ -683,6 +768,8 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
         currentWorkLabel: null,
         recentToolActivity: null,
         pendingApproval: null,
+        pendingWorkflowCheckpoint: null,
+        workflowState: null,
         error: null,
         statusStage: null,
         statusMessage: null,
@@ -706,6 +793,8 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
         currentWorkLabel: null,
         recentToolActivity: null,
         pendingApproval: null,
+        pendingWorkflowCheckpoint: null,
+        workflowState: null,
         error: null,
         isStreaming: false,
         statusStage: null,
@@ -735,6 +824,8 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
         currentWorkLabel: null,
         recentToolActivity: null,
         pendingApproval: null,
+        pendingWorkflowCheckpoint: null,
+        workflowState: null,
         error: null,
         isStreaming: false,
         statusStage: "ready",
@@ -779,6 +870,19 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
         log.error("Failed to load session history", { error: String(err) });
       }
     }
+  },
+
+  checkpointWorkflow: async (decision, feedback) => {
+    if (getConfiguredChatRuntime() === "claude_cli") {
+      return;
+    }
+    const { activeTabId, sessionId } = get();
+    await invoke("agent_checkpoint_action", {
+      tabId: activeTabId,
+      localSessionId: sessionId,
+      decision,
+      feedback: feedback ?? null,
+    });
   },
 
   setToolApproval: async (toolName, decision) => {
@@ -1045,5 +1149,15 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
 
   _setPendingApproval: (tabId, pendingApproval) => {
     set((state) => applyTabUpdate(state, tabId, { pendingApproval }));
+  },
+
+  _setPendingWorkflowCheckpoint: (tabId, pendingWorkflowCheckpoint) => {
+    set((state) =>
+      applyTabUpdate(state, tabId, { pendingWorkflowCheckpoint }),
+    );
+  },
+
+  _setWorkflowState: (tabId, workflowState) => {
+    set((state) => applyTabUpdate(state, tabId, { workflowState }));
   },
 }));

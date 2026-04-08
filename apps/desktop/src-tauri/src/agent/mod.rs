@@ -8,6 +8,7 @@ mod session;
 mod telemetry;
 mod tools;
 mod turn_engine;
+mod workflows;
 
 use tauri::{Emitter, Manager, State, WebviewWindow};
 use tokio::sync::watch;
@@ -24,6 +25,13 @@ pub use session::{
     AgentRuntimeState, AgentSessionRecord, AgentSessionSummary, AgentSessionWorkState,
 };
 use turn_engine::{emit_tool_resumed, emit_turn_resumed};
+use workflows::{
+    AgentWorkflowState, AgentWorkflowType, WorkflowCheckpointDecision,
+};
+use turn_engine::{
+    emit_workflow_checkpoint_approved, emit_workflow_checkpoint_rejected,
+    emit_workflow_checkpoint_requested,
+};
 
 use crate::settings;
 
@@ -796,6 +804,191 @@ async fn record_request_objective(
         .await;
 }
 
+async fn ensure_no_pending_workflow_checkpoint(
+    state: &AgentRuntimeState,
+    tab_id: &str,
+    local_session_id: Option<&str>,
+) -> Result<(), String> {
+    if state
+        .workflow_has_pending_checkpoint(tab_id, local_session_id)
+        .await
+    {
+        return Err(
+            "Workflow checkpoint is pending. Approve or request changes before continuing."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+async fn persist_turn_outcome(
+    state: &AgentRuntimeState,
+    runtime: &settings::AgentRuntimeConfig,
+    request: &AgentTurnDescriptor,
+    outcome: openai::AgentTurnOutcome,
+) -> String {
+    let selected_model = request
+        .model
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| runtime.model.clone());
+
+    let mut sessions = state.sessions.lock().await;
+    let local_session_id = if let Some(local_session_id) = request.local_session_id.as_ref() {
+        if let Some(session) = sessions.get_mut(local_session_id) {
+            session.touch_response(outcome.response_id.clone());
+            local_session_id.clone()
+        } else {
+            let mut session = AgentSessionRecord::new(
+                &runtime.provider,
+                request.project_path.clone(),
+                request.tab_id.clone(),
+                summarize_session_title(&request.prompt),
+                selected_model,
+            );
+            session.touch_response(outcome.response_id.clone());
+            let local_session_id = session.local_session_id.clone();
+            sessions.insert(session.local_session_id.clone(), session);
+            local_session_id
+        }
+    } else {
+        let mut session = AgentSessionRecord::new(
+            &runtime.provider,
+            request.project_path.clone(),
+            request.tab_id.clone(),
+            summarize_session_title(&request.prompt),
+            selected_model,
+        );
+        session.touch_response(outcome.response_id.clone());
+        let local_session_id = session.local_session_id.clone();
+        sessions.insert(session.local_session_id.clone(), session);
+        local_session_id
+    };
+    drop(sessions);
+    state
+        .bind_tab_state_to_session(&request.tab_id, &local_session_id)
+        .await;
+    state
+        .append_history(&local_session_id, outcome.messages)
+        .await;
+    local_session_id
+}
+
+async fn run_paper_drafting_workflow_turn(
+    window: &WebviewWindow,
+    state: &AgentRuntimeState,
+    runtime: &settings::AgentRuntimeConfig,
+    request: AgentTurnDescriptor,
+    mut workflow: AgentWorkflowState,
+) -> Result<String, String> {
+    workflow.can_run_stage()?;
+    record_request_objective(
+        state,
+        &request.tab_id,
+        request.local_session_id.as_deref(),
+        &request.prompt,
+    )
+    .await;
+
+    let staged_prompt = workflow.build_stage_prompt(&request.prompt);
+    let mut staged_profile = resolve_turn_profile(&request);
+    staged_profile.task_kind = AgentTaskKind::PaperDrafting;
+    let staged_request = AgentTurnDescriptor {
+        prompt: staged_prompt,
+        turn_profile: Some(staged_profile),
+        ..request.clone()
+    };
+
+    emit_agent_event(
+        window,
+        &request.tab_id,
+        AgentEventPayload::Status(AgentStatusEvent {
+            stage: "workflow_stage_running".to_string(),
+            message: format!("Running workflow stage: {}...", workflow.stage_label()),
+        }),
+    );
+
+    let prior_history = if let Some(local_session_id) = staged_request.local_session_id.as_ref() {
+        state
+            .history_for_session(local_session_id)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let cancel_rx = state.register_cancellation(&request.tab_id).await;
+    let outcome =
+        dispatch_run_turn_loop(window, state, &staged_request, &prior_history, Some(cancel_rx))
+            .await;
+    state.clear_cancellation(&request.tab_id).await;
+
+    match outcome {
+        Ok(outcome) => {
+            let suspended = outcome.suspended;
+            let local_session_id = persist_turn_outcome(state, runtime, &request, outcome).await;
+            workflow.bind_local_session_id(Some(&local_session_id));
+            workflow.tab_id = request.tab_id.clone();
+
+            if suspended {
+                state.upsert_workflow_state(workflow).await;
+                emit_agent_complete(window, &request.tab_id, "suspended");
+                return Ok(local_session_id);
+            }
+
+            workflow.mark_stage_completed(&request.prompt);
+            let stage = workflow.current_stage.as_str().to_string();
+            let message = format!(
+                "Workflow stage '{}' completed. Approve the checkpoint to continue.",
+                workflow.stage_label()
+            );
+            state.upsert_workflow_state(workflow).await;
+            state
+                .mark_pending_state(
+                    &request.tab_id,
+                    Some(&local_session_id),
+                    "workflow_checkpoint",
+                    "paper_drafting",
+                    None,
+                )
+                .await;
+            emit_workflow_checkpoint_requested(
+                Some(window),
+                &request.tab_id,
+                "paper_drafting",
+                &stage,
+                &message,
+            );
+            emit_agent_event(
+                window,
+                &request.tab_id,
+                AgentEventPayload::Status(AgentStatusEvent {
+                    stage: "workflow_checkpoint_requested".to_string(),
+                    message: message.clone(),
+                }),
+            );
+            emit_agent_complete(window, &request.tab_id, "suspended");
+            Ok(local_session_id)
+        }
+        Err(message) => {
+            if message == AGENT_CANCELLED_MESSAGE {
+                emit_agent_complete(window, &request.tab_id, "cancelled");
+                return Err(message);
+            }
+            let error_message = message.clone();
+            emit_agent_event(
+                window,
+                &request.tab_id,
+                AgentEventPayload::Error(AgentErrorEvent {
+                    code: "workflow_stage_failed".to_string(),
+                    message: error_message,
+                }),
+            );
+            emit_agent_complete(window, &request.tab_id, "error");
+            Err(message)
+        }
+    }
+}
+
 #[cfg(test)]
 mod prompt_tests {
     use super::{
@@ -1169,6 +1362,7 @@ pub async fn agent_start_turn(
         previous_response_id: None,
         turn_profile,
     };
+    ensure_no_pending_workflow_checkpoint(&state, &tab_id, None).await?;
 
     emit_agent_event(
         &window,
@@ -1267,6 +1461,12 @@ pub async fn agent_continue_turn(
         previous_response_id,
         turn_profile,
     };
+    ensure_no_pending_workflow_checkpoint(
+        &state,
+        &tab_id,
+        request.local_session_id.as_deref(),
+    )
+    .await?;
 
     emit_agent_event(
         &window,
@@ -1391,6 +1591,182 @@ pub async fn agent_continue_turn(
             Err(message)
         }
     }
+}
+
+#[tauri::command]
+pub async fn agent_start_workflow(
+    window: WebviewWindow,
+    state: State<'_, AgentRuntimeState>,
+    project_path: String,
+    prompt: String,
+    tab_id: String,
+    model: Option<String>,
+    workflow_type: Option<String>,
+    turn_profile: Option<AgentTurnProfile>,
+) -> Result<String, String> {
+    state.ensure_storage(&window.app_handle()).await?;
+    let runtime = selected_provider(&window.app_handle(), Some(&project_path))?;
+    let workflow_kind = workflow_type
+        .unwrap_or_else(|| "paper_drafting".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    if workflow_kind != "paper_drafting" {
+        return Err(format!("Unsupported workflow type: {}", workflow_kind));
+    }
+
+    state.clear_workflow_state(&tab_id, None).await;
+    let workflow = AgentWorkflowState::new_paper_drafting(&tab_id, &project_path, model.clone());
+    state.upsert_workflow_state(workflow.clone()).await;
+
+    emit_agent_event(
+        &window,
+        &tab_id,
+        AgentEventPayload::Status(AgentStatusEvent {
+            stage: "workflow_started".to_string(),
+            message: "Started paper drafting workflow.".to_string(),
+        }),
+    );
+
+    let request = AgentTurnDescriptor {
+        project_path,
+        prompt,
+        tab_id,
+        model,
+        local_session_id: None,
+        previous_response_id: None,
+        turn_profile,
+    };
+    run_paper_drafting_workflow_turn(&window, &state, &runtime, request, workflow).await
+}
+
+#[tauri::command]
+pub async fn agent_continue_workflow(
+    window: WebviewWindow,
+    state: State<'_, AgentRuntimeState>,
+    project_path: String,
+    prompt: String,
+    tab_id: String,
+    model: Option<String>,
+    local_session_id: Option<String>,
+    turn_profile: Option<AgentTurnProfile>,
+) -> Result<String, String> {
+    state.ensure_storage(&window.app_handle()).await?;
+    let runtime = selected_provider(&window.app_handle(), Some(&project_path))?;
+    let Some(mut workflow) = state
+        .workflow_state_for(&tab_id, local_session_id.as_deref())
+        .await
+    else {
+        return Err("No active workflow found for this tab/session.".to_string());
+    };
+    if workflow.workflow_type != AgentWorkflowType::PaperDrafting {
+        return Err("Only paper_drafting workflow is currently supported.".to_string());
+    }
+
+    let resolved_local_session_id = local_session_id.or(workflow.local_session_id.clone());
+    workflow.tab_id = tab_id.clone();
+    workflow.bind_local_session_id(resolved_local_session_id.as_deref());
+    state.upsert_workflow_state(workflow.clone()).await;
+
+    let request = AgentTurnDescriptor {
+        project_path,
+        prompt,
+        tab_id,
+        model,
+        local_session_id: resolved_local_session_id,
+        previous_response_id: None,
+        turn_profile,
+    };
+    run_paper_drafting_workflow_turn(&window, &state, &runtime, request, workflow).await
+}
+
+#[tauri::command]
+pub async fn agent_checkpoint_action(
+    window: WebviewWindow,
+    state: State<'_, AgentRuntimeState>,
+    tab_id: String,
+    local_session_id: Option<String>,
+    decision: String,
+    feedback: Option<String>,
+) -> Result<(), String> {
+    state.ensure_storage(&window.app_handle()).await?;
+    let Some(mut workflow) = state
+        .workflow_state_for(&tab_id, local_session_id.as_deref())
+        .await
+    else {
+        return Err("No active workflow found for this tab/session.".to_string());
+    };
+    let Some(decision) = WorkflowCheckpointDecision::from_str(&decision) else {
+        return Err("Unsupported checkpoint decision. Use approve or request_changes.".to_string());
+    };
+
+    let transition = workflow.apply_checkpoint_decision(decision.clone())?;
+    state
+        .clear_pending_state(&tab_id, local_session_id.as_deref())
+        .await;
+
+    match decision {
+        WorkflowCheckpointDecision::ApproveStage => {
+            if transition.completed {
+                state
+                    .clear_workflow_state(&tab_id, local_session_id.as_deref())
+                    .await;
+            } else {
+                state.upsert_workflow_state(workflow).await;
+            }
+            let message = if transition.completed {
+                "Workflow completed. You can start a new drafting workflow anytime.".to_string()
+            } else {
+                format!(
+                    "Checkpoint approved. Next stage: {}.",
+                    transition.to_stage
+                )
+            };
+            emit_workflow_checkpoint_approved(
+                Some(&window),
+                &tab_id,
+                "paper_drafting",
+                &transition.from_stage,
+                &transition.to_stage,
+                transition.completed,
+                &message,
+            );
+            emit_agent_event(
+                &window,
+                &tab_id,
+                AgentEventPayload::Status(AgentStatusEvent {
+                    stage: if transition.completed {
+                        "workflow_completed".to_string()
+                    } else {
+                        "workflow_checkpoint_approved".to_string()
+                    },
+                    message,
+                }),
+            );
+        }
+        WorkflowCheckpointDecision::RequestChanges => {
+            state.upsert_workflow_state(workflow).await;
+            let message = feedback
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| "Checkpoint rejected. Revise this stage before continuing.".to_string());
+            emit_workflow_checkpoint_rejected(
+                Some(&window),
+                &tab_id,
+                "paper_drafting",
+                &transition.to_stage,
+                &message,
+            );
+            emit_agent_event(
+                &window,
+                &tab_id,
+                AgentEventPayload::Status(AgentStatusEvent {
+                    stage: "workflow_checkpoint_rejected".to_string(),
+                    message,
+                }),
+            );
+        }
+    }
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -1597,6 +1973,7 @@ pub async fn agent_reset_tool_approvals(
     state.ensure_storage(&app).await?;
     state.clear_tool_approvals(&tab_id).await;
     state.clear_pending_turn(&tab_id, None).await;
+    state.clear_workflow_state(&tab_id, None).await;
     Ok(())
 }
 

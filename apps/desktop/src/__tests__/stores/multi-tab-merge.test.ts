@@ -50,6 +50,8 @@ function resetStores() {
         currentWorkLabel: null,
         recentToolActivity: null,
         pendingApproval: null,
+        pendingWorkflowCheckpoint: null,
+        workflowState: null,
         messages: [],
         isStreaming: false,
         error: null,

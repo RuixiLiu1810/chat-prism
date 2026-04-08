@@ -7,7 +7,8 @@ use super::events::{
     AgentApprovalRequestedEvent, AgentErrorEvent, AgentEventEnvelope, AgentEventPayload,
     AgentMessageDeltaEvent, AgentReviewArtifactReadyEvent, AgentStatusEvent, AgentToolCallEvent,
     AgentToolInterruptEvent, AgentToolInterruptPhase, AgentToolResultEvent, AgentToolResumedEvent,
-    AgentTurnResumedEvent, AGENT_EVENT_NAME,
+    AgentTurnResumedEvent, AgentWorkflowCheckpointApprovedEvent,
+    AgentWorkflowCheckpointRejectedEvent, AgentWorkflowCheckpointRequestedEvent, AGENT_EVENT_NAME,
 };
 use super::provider::AgentTurnDescriptor;
 use super::resolve_turn_profile;
@@ -709,6 +710,100 @@ pub fn emit_turn_resumed(
             false,
             false,
             message,
+        );
+    }
+}
+
+pub fn emit_workflow_checkpoint_requested(
+    window: Option<&WebviewWindow>,
+    tab_id: &str,
+    workflow_type: &str,
+    stage: &str,
+    message: &str,
+) {
+    let Some(window) = window else {
+        return;
+    };
+    if let Err(err) = window.emit(
+        AGENT_EVENT_NAME,
+        AgentEventEnvelope {
+            tab_id: tab_id.to_string(),
+            payload: AgentEventPayload::WorkflowCheckpointRequested(
+                AgentWorkflowCheckpointRequestedEvent {
+                    workflow_type: workflow_type.to_string(),
+                    stage: stage.to_string(),
+                    message: message.to_string(),
+                },
+            ),
+        },
+    ) {
+        eprintln!(
+            "[agent][emit] failed to send workflow_checkpoint_requested for {}: {}",
+            tab_id, err
+        );
+    }
+}
+
+pub fn emit_workflow_checkpoint_approved(
+    window: Option<&WebviewWindow>,
+    tab_id: &str,
+    workflow_type: &str,
+    from_stage: &str,
+    to_stage: &str,
+    completed: bool,
+    message: &str,
+) {
+    let Some(window) = window else {
+        return;
+    };
+    if let Err(err) = window.emit(
+        AGENT_EVENT_NAME,
+        AgentEventEnvelope {
+            tab_id: tab_id.to_string(),
+            payload: AgentEventPayload::WorkflowCheckpointApproved(
+                AgentWorkflowCheckpointApprovedEvent {
+                    workflow_type: workflow_type.to_string(),
+                    from_stage: from_stage.to_string(),
+                    to_stage: to_stage.to_string(),
+                    completed,
+                    message: message.to_string(),
+                },
+            ),
+        },
+    ) {
+        eprintln!(
+            "[agent][emit] failed to send workflow_checkpoint_approved for {}: {}",
+            tab_id, err
+        );
+    }
+}
+
+pub fn emit_workflow_checkpoint_rejected(
+    window: Option<&WebviewWindow>,
+    tab_id: &str,
+    workflow_type: &str,
+    stage: &str,
+    message: &str,
+) {
+    let Some(window) = window else {
+        return;
+    };
+    if let Err(err) = window.emit(
+        AGENT_EVENT_NAME,
+        AgentEventEnvelope {
+            tab_id: tab_id.to_string(),
+            payload: AgentEventPayload::WorkflowCheckpointRejected(
+                AgentWorkflowCheckpointRejectedEvent {
+                    workflow_type: workflow_type.to_string(),
+                    stage: stage.to_string(),
+                    message: message.to_string(),
+                },
+            ),
+        },
+    ) {
+        eprintln!(
+            "[agent][emit] failed to send workflow_checkpoint_rejected for {}: {}",
+            tab_id, err
         );
     }
 }

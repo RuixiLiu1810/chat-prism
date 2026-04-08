@@ -10,6 +10,7 @@ use tokio::sync::{watch, Mutex};
 use uuid::Uuid;
 
 use super::provider::AgentTurnProfile;
+use super::workflows::AgentWorkflowState;
 
 const PENDING_TURN_TTL_MINUTES: i64 = 10;
 const ALLOW_ONCE_TTL_MINUTES: i64 = 15;
@@ -17,6 +18,7 @@ const AGENT_RUNTIME_DIR: &str = "agent-runtime";
 const PENDING_TURNS_FILE: &str = "pending-turns.json";
 const TOOL_APPROVALS_FILE: &str = "tool-approvals.json";
 const TOOL_EXECUTION_LOG_FILE: &str = "tool-execution.jsonl";
+const WORKFLOW_STATES_FILE: &str = "workflow-states.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +154,7 @@ pub struct AgentRuntimeState {
     pub pending_turns: Arc<Mutex<HashMap<String, PendingTurnResume>>>,
     pub tab_work_states: Arc<Mutex<HashMap<String, AgentSessionWorkState>>>,
     pub session_work_states: Arc<Mutex<HashMap<String, AgentSessionWorkState>>>,
+    pub workflows: Arc<Mutex<HashMap<String, AgentWorkflowState>>>,
     persistence_dir: Arc<Mutex<Option<PathBuf>>>,
     persistence_loaded: Arc<Mutex<bool>>,
     telemetry_log_path: Arc<Mutex<Option<PathBuf>>>,
@@ -167,6 +170,7 @@ impl Default for AgentRuntimeState {
             pending_turns: Arc::new(Mutex::new(HashMap::new())),
             tab_work_states: Arc::new(Mutex::new(HashMap::new())),
             session_work_states: Arc::new(Mutex::new(HashMap::new())),
+            workflows: Arc::new(Mutex::new(HashMap::new())),
             persistence_dir: Arc::new(Mutex::new(None)),
             persistence_loaded: Arc::new(Mutex::new(false)),
             telemetry_log_path: Arc::new(Mutex::new(None)),
@@ -201,12 +205,14 @@ impl AgentRuntimeState {
 
         let approvals_path = base_dir.join(TOOL_APPROVALS_FILE);
         let pending_path = base_dir.join(PENDING_TURNS_FILE);
+        let workflows_path = base_dir.join(WORKFLOW_STATES_FILE);
 
         let mut approvals =
             read_json_file::<HashMap<String, HashMap<String, ToolApprovalRecord>>>(&approvals_path)
                 .await?;
         let mut pending_turns =
             read_json_file::<HashMap<String, PendingTurnResume>>(&pending_path).await?;
+        let workflows = read_json_file::<HashMap<String, AgentWorkflowState>>(&workflows_path).await?;
 
         let approvals_dirty = cleanup_expired_tool_approvals(&mut approvals);
         let pending_dirty = cleanup_expired_pending_turns(&mut pending_turns);
@@ -218,6 +224,10 @@ impl AgentRuntimeState {
         {
             let mut pending_state = self.pending_turns.lock().await;
             *pending_state = pending_turns;
+        }
+        {
+            let mut workflow_state = self.workflows.lock().await;
+            *workflow_state = workflows;
         }
 
         {
@@ -613,6 +623,8 @@ impl AgentRuntimeState {
         }
         drop(pending_turns);
         let _ = self.persist_pending_turns().await;
+        self.bind_workflow_to_session(tab_id, Some(local_session_id))
+            .await;
     }
 
     pub async fn clear_pending_turn(&self, tab_id: &str, local_session_id: Option<&str>) {
@@ -622,6 +634,89 @@ impl AgentRuntimeState {
         }
         let _ = self.persist_pending_turns().await;
         self.clear_pending_state(tab_id, local_session_id).await;
+    }
+
+    pub async fn upsert_workflow_state(&self, workflow: AgentWorkflowState) {
+        let workflow_id = workflow.workflow_id.clone();
+        {
+            let mut workflows = self.workflows.lock().await;
+            workflows.insert(workflow_id, workflow);
+        }
+        let _ = self.persist_workflow_states().await;
+    }
+
+    pub async fn workflow_state_for(
+        &self,
+        tab_id: &str,
+        local_session_id: Option<&str>,
+    ) -> Option<AgentWorkflowState> {
+        let workflows = self.workflows.lock().await;
+        workflows
+            .values()
+            .find(|workflow| workflow_matches(workflow, tab_id, local_session_id))
+            .cloned()
+    }
+
+    pub async fn workflow_has_pending_checkpoint(
+        &self,
+        tab_id: &str,
+        local_session_id: Option<&str>,
+    ) -> bool {
+        self.workflow_state_for(tab_id, local_session_id)
+            .await
+            .map(|workflow| workflow.pending_checkpoint)
+            .unwrap_or(false)
+    }
+
+    pub async fn bind_workflow_to_session(
+        &self,
+        tab_id: &str,
+        local_session_id: Option<&str>,
+    ) {
+        let Some(local_session_id) = local_session_id.filter(|value| !value.trim().is_empty()) else {
+            return;
+        };
+
+        let mut changed = false;
+        {
+            let mut workflows = self.workflows.lock().await;
+            for workflow in workflows.values_mut() {
+                let matches_tab = workflow.tab_id == tab_id;
+                let matches_session = workflow.local_session_id.as_deref() == Some(local_session_id);
+                if matches_tab || matches_session {
+                    workflow.tab_id = tab_id.to_string();
+                    workflow.bind_local_session_id(Some(local_session_id));
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            let _ = self.persist_workflow_states().await;
+        }
+    }
+
+    pub async fn clear_workflow_state(&self, tab_id: &str, local_session_id: Option<&str>) {
+        let mut changed = false;
+        {
+            let mut workflows = self.workflows.lock().await;
+            let workflow_ids = workflows
+                .iter()
+                .filter_map(|(workflow_id, workflow)| {
+                    if workflow_matches(workflow, tab_id, local_session_id) {
+                        Some(workflow_id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            for workflow_id in workflow_ids {
+                workflows.remove(&workflow_id);
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = self.persist_workflow_states().await;
+        }
     }
 
     pub async fn work_state_for_prompt(
@@ -662,6 +757,17 @@ impl AgentRuntimeState {
             pending_turns.clone()
         };
         write_json_file(&path, &pending_turns).await
+    }
+
+    async fn persist_workflow_states(&self) -> Result<(), String> {
+        let Some(path) = self.persistence_file(WORKFLOW_STATES_FILE).await else {
+            return Ok(());
+        };
+        let workflows = {
+            let workflows = self.workflows.lock().await;
+            workflows.clone()
+        };
+        write_json_file(&path, &workflows).await
     }
 
     async fn persistence_file(&self, file_name: &str) -> Option<PathBuf> {
@@ -709,6 +815,20 @@ impl AgentRuntimeState {
         let tab_work_states = self.tab_work_states.lock().await;
         tab_work_states.get(tab_id).cloned().unwrap_or_default()
     }
+}
+
+fn workflow_matches(
+    workflow: &AgentWorkflowState,
+    tab_id: &str,
+    local_session_id: Option<&str>,
+) -> bool {
+    if workflow.tab_id == tab_id {
+        return true;
+    }
+    if let Some(local_session_id) = local_session_id.filter(|value| !value.trim().is_empty()) {
+        return workflow.local_session_id.as_deref() == Some(local_session_id);
+    }
+    false
 }
 
 fn now_rfc3339() -> String {
@@ -855,6 +975,7 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{AgentRuntimeState, AgentSessionRecord, PendingTurnResume};
+    use crate::agent::workflows::AgentWorkflowState;
 
     #[tokio::test]
     async fn session_summary_includes_working_memory_fields() {
@@ -965,5 +1086,24 @@ mod tests {
         assert_eq!(pending.local_session_id.as_deref(), Some("session-a"));
         assert_eq!(pending.target_label.as_deref(), Some("main.tex"));
         assert!(state.take_pending_turn("tab-a").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn workflow_state_round_trips_through_runtime_state() {
+        let state = AgentRuntimeState::default();
+        let mut workflow =
+            AgentWorkflowState::new_paper_drafting("tab-a", "/tmp/project-a", None);
+        workflow.mark_stage_completed("Outline is done.");
+        let workflow_id = workflow.workflow_id.clone();
+
+        state.upsert_workflow_state(workflow.clone()).await;
+
+        let loaded = state.workflow_state_for("tab-a", None).await.unwrap();
+        assert_eq!(loaded.workflow_id, workflow_id);
+        assert!(loaded.pending_checkpoint);
+        assert_eq!(loaded.current_stage.as_str(), "outline_confirmation");
+
+        state.clear_workflow_state("tab-a", None).await;
+        assert!(state.workflow_state_for("tab-a", None).await.is_none());
     }
 }

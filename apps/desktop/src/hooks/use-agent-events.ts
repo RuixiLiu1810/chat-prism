@@ -71,6 +71,26 @@ type AgentEventPayload =
       localSessionId?: string | null;
       message: string;
     }
+  | {
+      type: "workflow_checkpoint_requested";
+      workflowType: string;
+      stage: string;
+      message: string;
+    }
+  | {
+      type: "workflow_checkpoint_approved";
+      workflowType: string;
+      fromStage: string;
+      toStage: string;
+      completed: boolean;
+      message: string;
+    }
+  | {
+      type: "workflow_checkpoint_rejected";
+      workflowType: string;
+      stage: string;
+      message: string;
+    }
   | { type: "error"; code: string; message: string };
 
 interface AgentEventEnvelope {
@@ -321,9 +341,11 @@ export function useAgentEvents() {
 
       if (outcome === "cancelled") {
         chatStore._setPendingApproval(tabId, null);
+        chatStore._setPendingWorkflowCheckpoint(tabId, null);
         chatStore._setStatus(tabId, "cancelled", "Agent run cancelled.");
       } else if (outcome === "completed") {
         chatStore._setPendingApproval(tabId, null);
+        chatStore._setPendingWorkflowCheckpoint(tabId, null);
         chatStore._setStatus(tabId, null, null);
       } else if (outcome === "suspended") {
         chatStore._setStatus(
@@ -530,9 +552,41 @@ export function useAgentEvents() {
           });
           chatStore._setStatus(tabId, "turn_resumed", payload.message);
           break;
+        case "workflow_checkpoint_requested":
+          chatStore._setStatus(tabId, "workflow_checkpoint_requested", payload.message);
+          chatStore._setPendingWorkflowCheckpoint(tabId, {
+            workflowType: payload.workflowType,
+            stage: payload.stage,
+            message: payload.message,
+          });
+          chatStore._setWorkflowState(tabId, {
+            workflowType: payload.workflowType,
+            stage: payload.stage,
+            completed: false,
+          });
+          break;
+        case "workflow_checkpoint_approved":
+          chatStore._setStatus(tabId, "workflow_checkpoint_approved", payload.message);
+          chatStore._setPendingWorkflowCheckpoint(tabId, null);
+          chatStore._setWorkflowState(tabId, {
+            workflowType: payload.workflowType,
+            stage: payload.toStage,
+            completed: payload.completed,
+          });
+          break;
+        case "workflow_checkpoint_rejected":
+          chatStore._setStatus(tabId, "workflow_checkpoint_rejected", payload.message);
+          chatStore._setPendingWorkflowCheckpoint(tabId, null);
+          chatStore._setWorkflowState(tabId, {
+            workflowType: payload.workflowType,
+            stage: payload.stage,
+            completed: false,
+          });
+          break;
         case "error":
           log.warn(`[${tabId}] agent error ${payload.code}: ${payload.message}`);
           chatStore._setPendingApproval(tabId, null);
+          chatStore._setPendingWorkflowCheckpoint(tabId, null);
           chatStore._setError(tabId, payload.message);
           chatStore._setStatus(tabId, "failed", payload.message);
           break;
