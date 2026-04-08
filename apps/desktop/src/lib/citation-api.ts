@@ -70,6 +70,7 @@ export interface CitationQueryExecutionDebug {
   s2_status: string;
   openalex_status: string;
   crossref_status: string;
+  pubmed_status: string;
 }
 
 export interface CitationSearchDebug {

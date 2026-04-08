@@ -772,7 +772,87 @@ fn build_numeric_context_queries(text: &str, max_n: usize) -> Vec<String> {
     out
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct QueryPlanBuildOptions {
+    pub enable_mesh_expansion: bool,
+    pub min_year: Option<u16>,
+    pub max_year: Option<u16>,
+}
+
+fn mesh_expansion_terms(cleaned_text: &str, max_n: usize) -> Vec<String> {
+    let lowered = cleaned_text.to_ascii_lowercase();
+    let mut terms = Vec::<String>::new();
+    let mut push = |term: &str| {
+        if terms.iter().any(|existing| existing == term) {
+            return;
+        }
+        if terms.len() < max_n {
+            terms.push(term.to_string());
+        }
+    };
+
+    if lowered.contains("cancer")
+        || lowered.contains("tumor")
+        || lowered.contains("leukemia")
+        || lowered.contains("carcinoma")
+    {
+        push("Neoplasms[MeSH Terms]");
+    }
+    if lowered.contains("crispr") || lowered.contains("gene editing") || lowered.contains("genome")
+    {
+        push("CRISPR-Cas Systems[MeSH Terms]");
+        push("Gene Editing[MeSH Terms]");
+    }
+    if lowered.contains("photocatal")
+        || lowered.contains("tio2")
+        || lowered.contains("nanotube")
+        || lowered.contains("catalyst")
+    {
+        push("Photocatalysis[MeSH Terms]");
+        push("Nanostructures[MeSH Terms]");
+    }
+    if lowered.contains("hydrophobic")
+        || lowered.contains("wettability")
+        || lowered.contains("contact angle")
+    {
+        push("Hydrophobic and Hydrophilic Interactions[MeSH Terms]");
+    }
+    if lowered.contains("randomized")
+        || lowered.contains("clinical trial")
+        || lowered.contains("patient")
+    {
+        push("Clinical Trials as Topic[MeSH Terms]");
+    }
+
+    terms
+}
+
+fn date_range_filter_clause(options: QueryPlanBuildOptions) -> Option<String> {
+    match (options.min_year, options.max_year) {
+        (None, None) => None,
+        (Some(min), Some(max)) if min <= max => Some(format!(
+            "({}[Date - Publication] : {}[Date - Publication])",
+            min, max
+        )),
+        (Some(min), _) => Some(format!(
+            "({}[Date - Publication] : 3000[Date - Publication])",
+            min
+        )),
+        (_, Some(max)) => Some(format!(
+            "(0001[Date - Publication] : {}[Date - Publication])",
+            max
+        )),
+    }
+}
+
 pub(crate) fn build_search_query_plan(raw_selected: &str) -> Vec<CitationQueryPlanItem> {
+    build_search_query_plan_with_options(raw_selected, QueryPlanBuildOptions::default())
+}
+
+pub(crate) fn build_search_query_plan_with_options(
+    raw_selected: &str,
+    options: QueryPlanBuildOptions,
+) -> Vec<CitationQueryPlanItem> {
     let cleaned = preprocess_selected_text(raw_selected);
     if cleaned.is_empty() {
         return Vec::new();
@@ -877,6 +957,40 @@ pub(crate) fn build_search_query_plan(raw_selected: &str) -> Vec<CitationQueryPl
                 weight: 0.74,
                 quality: CitationQueryQualityDebug::default(),
             });
+        }
+    }
+
+    if options.enable_mesh_expansion {
+        for (idx, mesh_term) in mesh_expansion_terms(&cleaned, 3).into_iter().enumerate() {
+            let expansion = if let Some(anchor) = plan.first() {
+                format!("{} {}", anchor.query, mesh_term)
+            } else {
+                mesh_term
+            };
+            append_query_plan_item(
+                &mut plan,
+                &mut seen,
+                &expansion,
+                &format!("mesh_expansion_{}", idx + 1),
+                "rule",
+                0.9,
+                240,
+            );
+        }
+    }
+
+    if let Some(date_clause) = date_range_filter_clause(options) {
+        if let Some(anchor) = plan.first().cloned() {
+            let query = format!("{} {}", anchor.query, date_clause);
+            append_query_plan_item(
+                &mut plan,
+                &mut seen,
+                &query,
+                "date_range_filtered",
+                "rule",
+                0.88,
+                260,
+            );
         }
     }
 
@@ -1138,6 +1252,10 @@ pub(crate) fn build_crossref_compact_query(query: &str) -> String {
     build_compact_query(query, 14, 160)
 }
 
+pub(crate) fn build_pubmed_compact_query(query: &str) -> String {
+    build_compact_query(query, 20, 220)
+}
+
 // --- Query selection ---
 
 fn query_similarity_for_mmr(a: &[String], b: &[String]) -> f32 {
@@ -1222,4 +1340,28 @@ pub(crate) fn compose_query_quality_total(
         - 0.15 * noise_penalty
         - 0.05 * length_penalty)
         .clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_search_query_plan_with_options, QueryPlanBuildOptions};
+
+    #[test]
+    fn query_plan_supports_mesh_and_date_hooks() {
+        let plan = build_search_query_plan_with_options(
+            "CRISPR therapy in leukemia",
+            QueryPlanBuildOptions {
+                enable_mesh_expansion: true,
+                min_year: Some(2018),
+                max_year: Some(2025),
+            },
+        );
+        assert!(!plan.is_empty());
+        assert!(plan
+            .iter()
+            .any(|item| item.strategy.starts_with("mesh_expansion_")));
+        assert!(plan
+            .iter()
+            .any(|item| item.strategy == "date_range_filtered"));
+    }
 }

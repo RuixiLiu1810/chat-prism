@@ -3,18 +3,19 @@ mod query;
 mod scoring;
 mod types;
 
-// Re-export public types used externally (Tauri commands return these)
+// Re-export public types used externally (Tauri commands return these).
+#[allow(unused_imports)]
 pub use types::{
     CitationCandidate, CitationNeedDecisionDebug, CitationProviderBudgetDebug,
     CitationQueryExecutionDebug, CitationQueryPlanItem, CitationQueryQualityDebug,
-    CitationScoreExplain, CitationSearchAttemptDebug, CitationSearchDebug,
-    CitationSearchResponse,
+    CitationScoreExplain, CitationSearchAttemptDebug, CitationSearchDebug, CitationSearchResponse,
 };
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::settings;
+use serde::Serialize;
 
 use providers::*;
 use query::*;
@@ -34,6 +35,34 @@ fn finalize_citation_run(
         debug,
         error,
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AgentLiteratureSearchOptions {
+    pub limit: u32,
+    pub enable_mesh_expansion: bool,
+    pub min_year: Option<u16>,
+    pub max_year: Option<u16>,
+}
+
+impl Default for AgentLiteratureSearchOptions {
+    fn default() -> Self {
+        Self {
+            limit: 8,
+            enable_mesh_expansion: false,
+            min_year: None,
+            max_year: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentLiteratureSearchOutput {
+    pub query: String,
+    pub query_plan: Vec<CitationQueryPlanItem>,
+    pub executed_queries: Vec<CitationQueryExecutionDebug>,
+    pub provider_errors: Vec<String>,
+    pub results: Vec<CitationCandidate>,
 }
 
 async fn run_citation_search(
@@ -268,8 +297,10 @@ async fn run_citation_search(
     let mut errors: Vec<String> = Vec::new();
     let mut openalex_responded = false;
     let mut crossref_responded = false;
+    let mut pubmed_responded = false;
     let mut openalex_rate_limited = false;
     let mut crossref_rate_limited = false;
+    let mut pubmed_rate_limited = false;
     let mut s2_rate_limited = false;
     let rule_query_count = execution_plan.iter().filter(|q| q.source == "rule").count();
     let llm_query_count = execution_plan.len().saturating_sub(rule_query_count);
@@ -305,6 +336,12 @@ async fn run_citation_search(
     let mut crossref_skipped_budget = 0usize;
     let mut crossref_skipped_rate_limit = 0usize;
 
+    let mut pubmed_llm_budget = llm_query_count.min(2);
+    let pubmed_initial_budget = rule_query_count + pubmed_llm_budget;
+    let mut pubmed_used = 0usize;
+    let mut pubmed_skipped_budget = 0usize;
+    let mut pubmed_skipped_rate_limit = 0usize;
+
     'query_loop: for item in &execution_plan {
         let q = item.query.clone();
         let mut query_has_quality_hit = false;
@@ -318,6 +355,7 @@ async fn run_citation_search(
             s2_status: "pending".to_string(),
             openalex_status: "pending".to_string(),
             crossref_status: "pending".to_string(),
+            pubmed_status: "pending".to_string(),
         };
 
         let s2_allowed = item.source == "rule" || item.weight >= 0.80;
@@ -413,6 +451,7 @@ async fn run_citation_search(
             stop_hit_ratio = Some(hit_ratio);
             exec.openalex_status = "skipped_enough_results".to_string();
             exec.crossref_status = "skipped_enough_results".to_string();
+            exec.pubmed_status = "skipped_enough_results".to_string();
             query_execution.push(exec);
             break 'query_loop;
         }
@@ -513,6 +552,7 @@ async fn run_citation_search(
             stop_stage = Some("after_openalex".to_string());
             stop_hit_ratio = Some(hit_ratio);
             exec.crossref_status = "skipped_enough_results".to_string();
+            exec.pubmed_status = "skipped_enough_results".to_string();
             query_execution.push(exec);
             break 'query_loop;
         }
@@ -604,6 +644,95 @@ async fn run_citation_search(
             }
         }
 
+        let pubmed_allowed_by_weight = item.source == "rule" || item.weight >= 0.78;
+        if !pubmed_allowed_by_weight {
+            exec.pubmed_status = "skipped_low_weight".to_string();
+        } else {
+            let pubmed_allowed_by_budget = if item.source == "llm" {
+                if pubmed_llm_budget == 0 {
+                    false
+                } else {
+                    pubmed_llm_budget -= 1;
+                    true
+                }
+            } else {
+                true
+            };
+
+            if !pubmed_allowed_by_budget {
+                pubmed_skipped_budget += 1;
+                exec.pubmed_status = "skipped_llm_budget".to_string();
+            } else if pubmed_rate_limited {
+                pubmed_skipped_rate_limit += 1;
+                exec.pubmed_status = "skipped_rate_limited".to_string();
+            } else {
+                let pubmed_query = build_pubmed_compact_query(&q);
+                if pubmed_query.trim().is_empty() {
+                    exec.pubmed_status = "skipped_empty_query".to_string();
+                    debug.attempts.push(CitationSearchAttemptDebug {
+                        query: q.clone(),
+                        provider: "pubmed".to_string(),
+                        ok: false,
+                        error: Some("Skipped empty compact query".to_string()),
+                        result_count: 0,
+                        candidates: Vec::new(),
+                    });
+                } else {
+                    pubmed_used += 1;
+                    query_attempted_provider = true;
+                    match search_pubmed(&pubmed_query, score_basis, per_query_limit, None, None)
+                        .await
+                    {
+                        Ok(candidates) => {
+                            let candidates =
+                                apply_query_context_scores(candidates, item, PROVIDER_PUBMED);
+                            pubmed_responded = true;
+                            exec.pubmed_status = format!("ok({})", candidates.len());
+                            debug.attempts.push(CitationSearchAttemptDebug {
+                                query: pubmed_query.clone(),
+                                provider: "pubmed".to_string(),
+                                ok: true,
+                                error: None,
+                                result_count: candidates.len(),
+                                candidates: candidates.clone(),
+                            });
+                            if !candidates.is_empty() {
+                                if has_quality_hit(&candidates, query_execution_hit_score_threshold)
+                                {
+                                    query_has_quality_hit = true;
+                                }
+                                merged = merge_candidates(merged, candidates);
+                            }
+                        }
+                        Err(err) => {
+                            if err.contains("status 429")
+                                || err.contains("Too Many Requests")
+                                || err.contains("circuit cooldown")
+                            {
+                                pubmed_rate_limited = true;
+                                exec.pubmed_status = "error_rate_limited".to_string();
+                            } else {
+                                exec.pubmed_status = "error".to_string();
+                            }
+                            errors.push(format!(
+                                "PubMed [{}]: {}",
+                                short_query(&pubmed_query),
+                                err
+                            ));
+                            debug.attempts.push(CitationSearchAttemptDebug {
+                                query: pubmed_query.clone(),
+                                provider: "pubmed".to_string(),
+                                ok: false,
+                                error: Some(err),
+                                result_count: 0,
+                                candidates: Vec::new(),
+                            });
+                        }
+                    };
+                }
+            }
+        }
+
         attempted_queries += usize::from(query_attempted_provider);
         quality_hit_queries += usize::from(query_has_quality_hit);
         query_execution.push(exec);
@@ -616,7 +745,7 @@ async fn run_citation_search(
             query_execution_min_hit_ratio,
         ) {
             stop_reason = Some("enough_results_hit_ratio".to_string());
-            stop_stage = Some("after_crossref".to_string());
+            stop_stage = Some("after_pubmed".to_string());
             stop_hit_ratio = Some(hit_ratio);
             break 'query_loop;
         }
@@ -659,12 +788,19 @@ async fn run_citation_search(
             skipped_due_to_budget: crossref_skipped_budget,
             skipped_due_to_rate_limit: crossref_skipped_rate_limit,
         },
+        CitationProviderBudgetDebug {
+            provider: "pubmed".to_string(),
+            initial: pubmed_initial_budget,
+            used: pubmed_used,
+            skipped_due_to_budget: pubmed_skipped_budget,
+            skipped_due_to_rate_limit: pubmed_skipped_rate_limit,
+        },
     ];
 
     if merged.is_empty() {
         // Semantic Scholar can be rate-limited (429). If OpenAlex/Crossref responded but found no hit,
         // treat as normal "no match" rather than hard failure.
-        if openalex_responded || crossref_responded {
+        if openalex_responded || crossref_responded || pubmed_responded {
             debug.merged_results = Vec::new();
             return finalize_citation_run(debug, Vec::new(), None, started_at);
         }
@@ -690,6 +826,158 @@ async fn run_citation_search(
     debug.merged_results = merged.clone();
 
     finalize_citation_run(debug, merged, None, started_at)
+}
+
+pub async fn search_literature_for_agent(
+    query: &str,
+    options: AgentLiteratureSearchOptions,
+) -> Result<AgentLiteratureSearchOutput, String> {
+    let cleaned = preprocess_selected_text(query);
+    if cleaned.is_empty() {
+        return Err("search_literature query must not be empty.".to_string());
+    }
+
+    let limit = options.limit.clamp(1, 20);
+    let mut query_plan = build_search_query_plan_with_options(
+        &cleaned,
+        QueryPlanBuildOptions {
+            enable_mesh_expansion: options.enable_mesh_expansion,
+            min_year: options.min_year,
+            max_year: options.max_year,
+        },
+    );
+    for item in &mut query_plan {
+        item.quality = score_query_quality(&item.query, &cleaned);
+    }
+    query_plan.sort_by(|a, b| {
+        b.quality
+            .total
+            .total_cmp(&a.quality.total)
+            .then_with(|| b.weight.total_cmp(&a.weight))
+    });
+
+    let executed_plan = select_execution_query_plan(&query_plan, 4, 0.12, 0.75);
+    let per_query_limit = (limit.saturating_mul(2)).clamp(6, 20);
+    let s2_api_key = std::env::var("S2_API_KEY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let mut merged = Vec::<CitationCandidate>::new();
+    let mut provider_errors = Vec::<String>::new();
+    let mut executed_queries = Vec::<CitationQueryExecutionDebug>::new();
+
+    for item in &executed_plan {
+        let mut exec = CitationQueryExecutionDebug {
+            query: item.query.clone(),
+            source: item.source.clone(),
+            strategy: item.strategy.clone(),
+            weight: item.weight,
+            quality_score: item.quality.total,
+            s2_status: "pending".to_string(),
+            openalex_status: "pending".to_string(),
+            crossref_status: "pending".to_string(),
+            pubmed_status: "pending".to_string(),
+        };
+
+        let s2_query = build_s2_compact_query(&item.query);
+        match search_semantic_scholar(&s2_query, &cleaned, per_query_limit, s2_api_key.as_deref())
+            .await
+        {
+            Ok(candidates) => {
+                let candidates = apply_query_context_scores(candidates, item, PROVIDER_S2);
+                exec.s2_status = format!("ok({})", candidates.len());
+                if !candidates.is_empty() {
+                    merged = merge_candidates(merged, candidates);
+                }
+            }
+            Err(err) => {
+                exec.s2_status = "error".to_string();
+                provider_errors.push(format!("S2 [{}]: {}", short_query(&s2_query), err));
+            }
+        }
+
+        let openalex_query = build_openalex_compact_query(&item.query);
+        match search_openalex(&openalex_query, &cleaned, per_query_limit).await {
+            Ok(candidates) => {
+                let candidates = apply_query_context_scores(candidates, item, PROVIDER_OPENALEX);
+                exec.openalex_status = format!("ok({})", candidates.len());
+                if !candidates.is_empty() {
+                    merged = merge_candidates(merged, candidates);
+                }
+            }
+            Err(err) => {
+                exec.openalex_status = "error".to_string();
+                provider_errors.push(format!(
+                    "OpenAlex [{}]: {}",
+                    short_query(&openalex_query),
+                    err
+                ));
+            }
+        }
+
+        let crossref_query = build_crossref_compact_query(&item.query);
+        match search_crossref(&crossref_query, &cleaned, per_query_limit).await {
+            Ok(candidates) => {
+                let candidates = apply_query_context_scores(candidates, item, PROVIDER_CROSSREF);
+                exec.crossref_status = format!("ok({})", candidates.len());
+                if !candidates.is_empty() {
+                    merged = merge_candidates(merged, candidates);
+                }
+            }
+            Err(err) => {
+                exec.crossref_status = "error".to_string();
+                provider_errors.push(format!(
+                    "Crossref [{}]: {}",
+                    short_query(&crossref_query),
+                    err
+                ));
+            }
+        }
+
+        let pubmed_query = build_pubmed_compact_query(&item.query);
+        match search_pubmed(
+            &pubmed_query,
+            &cleaned,
+            per_query_limit,
+            options.min_year,
+            options.max_year,
+        )
+        .await
+        {
+            Ok(candidates) => {
+                let candidates = apply_query_context_scores(candidates, item, PROVIDER_PUBMED);
+                exec.pubmed_status = format!("ok({})", candidates.len());
+                if !candidates.is_empty() {
+                    merged = merge_candidates(merged, candidates);
+                }
+            }
+            Err(err) => {
+                exec.pubmed_status = "error".to_string();
+                provider_errors.push(format!("PubMed [{}]: {}", short_query(&pubmed_query), err));
+            }
+        }
+
+        executed_queries.push(exec);
+    }
+
+    merged.sort_by(|a, b| b.score.total_cmp(&a.score));
+    merged.truncate(limit as usize);
+
+    if merged.is_empty() && !provider_errors.is_empty() {
+        return Err(format!(
+            "Literature search failed. {}",
+            truncate_chars(&provider_errors.join(" | "), 520)
+        ));
+    }
+
+    Ok(AgentLiteratureSearchOutput {
+        query: cleaned,
+        query_plan,
+        executed_queries,
+        provider_errors,
+        results: merged,
+    })
 }
 
 #[tauri::command]

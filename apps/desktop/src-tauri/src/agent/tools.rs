@@ -11,6 +11,8 @@ use crate::process_utils;
 mod document;
 #[path = "tools/edit.rs"]
 mod edit;
+#[path = "tools/literature.rs"]
+mod literature;
 #[path = "tools/shell.rs"]
 mod shell;
 #[path = "tools/workspace.rs"]
@@ -43,6 +45,10 @@ pub(crate) use document::{
 };
 pub(crate) use edit::{
     execute_apply_text_patch, execute_replace_selected_text, execute_write_file,
+};
+pub(crate) use literature::{
+    execute_analyze_paper, execute_compare_papers, execute_extract_methodology,
+    execute_search_literature, execute_synthesize_evidence,
 };
 pub(crate) use shell::execute_run_shell_command;
 pub(crate) use workspace::{execute_list_files, execute_read_file, execute_search_project};
@@ -78,6 +84,7 @@ pub enum ToolCapabilityClass {
     ReadDocument,
     SearchDocument,
     InspectResource,
+    LiteratureAnalysis,
     DraftWriting,
     ReviewWriting,
     EditPatch,
@@ -119,6 +126,7 @@ pub enum ToolResultShape {
     DocumentExcerpt,
     DocumentSearch,
     ResourceInfo,
+    LiteratureOutput,
     WritingOutput,
     WorkspaceSearch,
     ReviewArtifact,
@@ -158,6 +166,20 @@ pub fn tool_contract(tool_name: &str) -> AgentToolContract {
             result_shape: ToolResultShape::DocumentExcerpt,
             parallel_safe: true,
             approval_bucket: "read_document",
+        },
+        "search_literature"
+        | "analyze_paper"
+        | "compare_papers"
+        | "synthesize_evidence"
+        | "extract_methodology" => AgentToolContract {
+            capability_class: ToolCapabilityClass::LiteratureAnalysis,
+            resource_scope: ToolResourceScope::Document,
+            approval_policy: ToolApprovalPolicy::Never,
+            review_policy: ToolReviewPolicy::None,
+            suspend_behavior: ToolSuspendBehavior::None,
+            result_shape: ToolResultShape::LiteratureOutput,
+            parallel_safe: true,
+            approval_bucket: "literature_analysis",
         },
         "inspect_resource" => AgentToolContract {
             capability_class: ToolCapabilityClass::InspectResource,
@@ -303,6 +325,7 @@ pub fn tool_display_kind(tool_name: &str) -> &'static str {
         ToolCapabilityClass::ReadDocument => "document_read",
         ToolCapabilityClass::SearchDocument => "document_search",
         ToolCapabilityClass::InspectResource => "resource_info",
+        ToolCapabilityClass::LiteratureAnalysis => "literature_analysis",
         ToolCapabilityClass::DraftWriting => "writing_draft",
         ToolCapabilityClass::ReviewWriting => "writing_review",
         ToolCapabilityClass::EditPatch => "edit_patch",
@@ -416,6 +439,106 @@ fn build_default_tool_specs(include_writing_tools: bool) -> Vec<AgentToolSpec> {
                     "path": { "type": "string", "description": "Project-relative path for the document resource." },
                     "query": { "type": "string", "description": "Optional question or search query for targeted evidence." },
                     "limit": { "type": "integer", "description": "Optional maximum number of evidence snippets to return when query is provided." }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        ),
+        make_tool_spec(
+            "search_literature",
+            "Search academic literature across multiple providers (Semantic Scholar, OpenAlex, Crossref, PubMed). Supports optional MeSH expansion and year filters. Returns structured citation candidates.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Literature query describing the research topic, claim, or question." },
+                    "limit": { "type": "integer", "description": "Optional maximum number of merged results (default 10)." },
+                    "mesh_expansion": { "type": "boolean", "description": "Whether to include MeSH-oriented query expansions (default true)." },
+                    "min_year": { "type": "integer", "description": "Optional lower publication year bound." },
+                    "max_year": { "type": "integer", "description": "Optional upper publication year bound." }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+        ),
+        make_tool_spec(
+            "analyze_paper",
+            "Analyze an ingested PDF/DOCX paper and return objective, methods, findings, limitations, and relevance.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Project-relative path to PDF/DOCX resource." },
+                    "focus": { "type": "string", "description": "Optional focus question to score relevance." },
+                    "max_items": { "type": "integer", "description": "Optional max number of extracted method/finding/limitation items." }
+                },
+                "required": ["path"],
+                "additionalProperties": false
+            }),
+        ),
+        make_tool_spec(
+            "compare_papers",
+            "Compare multiple papers and return shared findings, conflicting signals, and methodology differences.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "papers": {
+                        "type": "array",
+                        "description": "Array of paper paths or objects with path field.",
+                        "items": {
+                            "oneOf": [
+                                { "type": "string" },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "path": { "type": "string" }
+                                    },
+                                    "required": ["path"],
+                                    "additionalProperties": false
+                                }
+                            ]
+                        }
+                    },
+                    "focus": { "type": "string", "description": "Optional comparison focus question." }
+                },
+                "required": ["papers"],
+                "additionalProperties": false
+            }),
+        ),
+        make_tool_spec(
+            "synthesize_evidence",
+            "Synthesize evidence from multiple papers into theme-organized blocks with source-linked support.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "papers": {
+                        "type": "array",
+                        "description": "Array of paper paths or objects with path field.",
+                        "items": {
+                            "oneOf": [
+                                { "type": "string" },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "path": { "type": "string" }
+                                    },
+                                    "required": ["path"],
+                                    "additionalProperties": false
+                                }
+                            ]
+                        }
+                    },
+                    "focus": { "type": "string", "description": "Optional synthesis focus question." }
+                },
+                "required": ["papers"],
+                "additionalProperties": false
+            }),
+        ),
+        make_tool_spec(
+            "extract_methodology",
+            "Extract structured methodology fields from a paper: study design, sample, intervention, endpoints, and statistics.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Project-relative path to PDF/DOCX resource." }
                 },
                 "required": ["path"],
                 "additionalProperties": false
@@ -671,6 +794,21 @@ pub async fn execute_tool_call(
         "read_document" => {
             execute_read_document(project_root, &call.call_id, parsed_args, cancel_rx).await
         }
+        "search_literature" => {
+            execute_search_literature(&call.call_id, parsed_args, cancel_rx).await
+        }
+        "analyze_paper" => {
+            execute_analyze_paper(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "compare_papers" => {
+            execute_compare_papers(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "synthesize_evidence" => {
+            execute_synthesize_evidence(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "extract_methodology" => {
+            execute_extract_methodology(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
         "inspect_resource" => {
             execute_inspect_resource(project_root, &call.call_id, parsed_args, cancel_rx).await
         }
@@ -693,9 +831,7 @@ pub async fn execute_tool_call(
         "generate_abstract" => {
             execute_generate_abstract(project_root, &call.call_id, parsed_args, cancel_rx).await
         }
-        "insert_citation" => {
-            execute_insert_citation(&call.call_id, parsed_args, cancel_rx).await
-        }
+        "insert_citation" => execute_insert_citation(&call.call_id, parsed_args, cancel_rx).await,
         "replace_selected_text" => {
             execute_replace_selected_text(
                 runtime_state,
@@ -942,8 +1078,7 @@ pub fn check_tool_call_policy(
     if matches!(
         context.task_kind,
         AgentTaskKind::Analysis | AgentTaskKind::LiteratureReview | AgentTaskKind::PeerReview
-    )
-        && context.has_binary_attachment_context
+    ) && context.has_binary_attachment_context
         && call.tool_name == "run_shell_command"
     {
         return Some(AgentToolResult {
@@ -963,8 +1098,7 @@ pub fn check_tool_call_policy(
     if matches!(
         context.task_kind,
         AgentTaskKind::Analysis | AgentTaskKind::LiteratureReview | AgentTaskKind::PeerReview
-    )
-        && context.has_binary_attachment_context
+    ) && context.has_binary_attachment_context
         && call.tool_name == "read_file"
         && target.map(is_document_resource_path).unwrap_or(false)
     {
@@ -1620,11 +1754,11 @@ fn files_preview(prefix: &str, lines: &[String], truncated: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_default_tool_specs, default_tool_specs, ensure_relative_path, execute_apply_text_patch,
-        execute_read_document_excerpt, execute_read_file, execute_replace_selected_text,
-        line_col_to_byte_offset, parse_selection_anchor, replace_by_anchor, replace_unique_exact,
-        replace_unique_with_trimmed_fallback, to_openai_tool_schema, tool_contract,
-        truncate_file_bytes, AgentToolSpec, MAX_FILE_BYTES,
+        build_default_tool_specs, default_tool_specs, ensure_relative_path,
+        execute_apply_text_patch, execute_read_document_excerpt, execute_read_file,
+        execute_replace_selected_text, line_col_to_byte_offset, parse_selection_anchor,
+        replace_by_anchor, replace_unique_exact, replace_unique_with_trimmed_fallback,
+        to_openai_tool_schema, tool_contract, truncate_file_bytes, AgentToolSpec, MAX_FILE_BYTES,
     };
     use crate::agent::document_artifacts::artifact_path_for;
     use crate::agent::session::AgentRuntimeState;

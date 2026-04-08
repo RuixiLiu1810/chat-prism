@@ -478,6 +478,39 @@ pub fn tool_result_feedback_for_model(result: &AgentToolResult) -> String {
             .and_then(Value::as_str)
             .map(str::to_string)
             .unwrap_or_else(|| "Citation insertion completed.".to_string()),
+        "search_literature" => {
+            let query = result
+                .content
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or("query");
+            let count = result
+                .content
+                .get("resultCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            format!(
+                "Literature search for '{}' returned {} candidate papers.",
+                query, count
+            )
+        }
+        "analyze_paper" => {
+            let path = result
+                .content
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or("paper");
+            let objective = result
+                .content
+                .get("objective")
+                .and_then(Value::as_str)
+                .unwrap_or("Objective not available.");
+            format!(
+                "Paper analysis completed for {}.\nObjective: {}",
+                path, objective
+            )
+        }
+        "compare_papers" | "synthesize_evidence" | "extract_methodology" => result.preview.clone(),
         _ => {
             if result.preview.trim().is_empty() {
                 "Tool completed successfully.".to_string()

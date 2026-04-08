@@ -99,6 +99,7 @@ function formatStopStage(stage?: string) {
   if (stage === "after_semantic_scholar") return "after Semantic Scholar";
   if (stage === "after_openalex") return "after OpenAlex";
   if (stage === "after_crossref") return "after Crossref";
+  if (stage === "after_pubmed") return "after PubMed";
   return stage;
 }
 
@@ -494,7 +495,7 @@ export function ScholarPanel() {
                         </div>
                         <div className="text-muted-foreground">
                           S2: {step.s2_status} · OA: {step.openalex_status} · CR:{" "}
-                          {step.crossref_status}
+                          {step.crossref_status} · PM: {step.pubmed_status}
                         </div>
                       </div>
                     ))

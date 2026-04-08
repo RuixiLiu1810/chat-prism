@@ -644,6 +644,7 @@ pub(crate) fn provider_score_factor(provider: &str) -> f32 {
         PROVIDER_S2 => 1.02,
         PROVIDER_OPENALEX => 1.0,
         PROVIDER_CROSSREF => 0.98,
+        PROVIDER_PUBMED => 1.01,
         _ => 1.0,
     }
 }
@@ -673,6 +674,10 @@ pub(crate) fn strategy_score_factor(strategy: &str) -> f32 {
         0.99
     } else if strategy == "llm_broad" {
         0.92
+    } else if strategy.starts_with("mesh_expansion_") {
+        1.01
+    } else if strategy == "date_range_filtered" {
+        0.96
     } else {
         1.0
     }

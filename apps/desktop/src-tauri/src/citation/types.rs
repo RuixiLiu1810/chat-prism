@@ -117,6 +117,7 @@ pub struct CitationQueryExecutionDebug {
     pub s2_status: String,
     pub openalex_status: String,
     pub crossref_status: String,
+    pub pubmed_status: String,
 }
 
 #[derive(Debug, Serialize, Clone, Default)]
@@ -462,6 +463,9 @@ pub(crate) const OPENALEX_MIN_INTERVAL_MS: u64 = 120;
 pub(crate) const CROSSREF_TIMEOUT_SECS: u64 = 8;
 pub(crate) const CROSSREF_CONNECT_TIMEOUT_SECS: u64 = 3;
 pub(crate) const CROSSREF_MIN_INTERVAL_MS: u64 = 180;
+pub(crate) const PUBMED_TIMEOUT_SECS: u64 = 8;
+pub(crate) const PUBMED_CONNECT_TIMEOUT_SECS: u64 = 3;
+pub(crate) const PUBMED_MIN_INTERVAL_MS: u64 = 350;
 pub(crate) const PROVIDER_MAX_RETRIES: usize = 1; // total attempts = 2
 pub(crate) const PROVIDER_CIRCUIT_THRESHOLD: u32 = 3;
 pub(crate) const PROVIDER_CIRCUIT_BASE_COOLDOWN_SECS: u64 = 8;
@@ -469,6 +473,7 @@ pub(crate) const PROVIDER_CIRCUIT_MAX_COOLDOWN_SECS: u64 = 90;
 pub(crate) const PROVIDER_S2: &str = "semantic_scholar";
 pub(crate) const PROVIDER_OPENALEX: &str = "openalex";
 pub(crate) const PROVIDER_CROSSREF: &str = "crossref";
+pub(crate) const PROVIDER_PUBMED: &str = "pubmed";
 pub(crate) const QUERY_EMBEDDING_PROVIDER_NONE: &str = "none";
 pub(crate) const QUERY_EMBEDDING_PROVIDER_LOCAL: &str = "local_embedding";
 pub(crate) const QUERY_EXECUTION_DEFAULT_TOP_N: usize = 5;
