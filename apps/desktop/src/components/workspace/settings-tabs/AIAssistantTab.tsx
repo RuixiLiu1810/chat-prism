@@ -2,6 +2,7 @@ import { LoaderIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -13,7 +14,9 @@ import type { AgentSmokeResult } from "@/lib/settings-api";
 import {
   panelClass,
   type AgentProvider,
+  type AgentDomain,
   type AgentRuntimeKind,
+  type AgentTerminologyStrictness,
 } from "./types";
 
 interface AIAssistantTabProps {
@@ -28,6 +31,13 @@ interface AIAssistantTabProps {
   saveAgentProvider: (provider: AgentProvider) => Promise<void>;
   saveAgentModel: () => Promise<void>;
   saveAgentBaseUrl: () => Promise<void>;
+  agentDomain: AgentDomain;
+  saveAgentDomain: (domain: AgentDomain) => Promise<void>;
+  terminologyStrictness: AgentTerminologyStrictness;
+  saveTerminologyStrictness: (value: AgentTerminologyStrictness) => Promise<void>;
+  customDomainInstructions: string;
+  setCustomDomainInstructions: (v: string) => void;
+  saveCustomDomainInstructions: () => Promise<void>;
   // API key
   agentApiKeyInput: string;
   setAgentApiKeyInput: (v: string) => void;
@@ -81,6 +91,13 @@ export function AIAssistantTab({
   saveAgentProvider,
   saveAgentModel,
   saveAgentBaseUrl,
+  agentDomain,
+  saveAgentDomain,
+  terminologyStrictness,
+  saveTerminologyStrictness,
+  customDomainInstructions,
+  setCustomDomainInstructions,
+  saveCustomDomainInstructions,
   agentApiKeyInput,
   setAgentApiKeyInput,
   showAgentApiKey,
@@ -181,6 +198,45 @@ export function AIAssistantTab({
               onBlur={() => void saveAgentModel()}
             />
           </div>
+          <div className="space-y-2">
+            <Label>Domain</Label>
+            <Select
+              value={agentDomain}
+              onValueChange={(value) =>
+                void saveAgentDomain(value as AgentDomain)
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="general">General</SelectItem>
+                <SelectItem value="biomedical">Biomedical</SelectItem>
+                <SelectItem value="chemistry">Chemistry</SelectItem>
+                <SelectItem value="custom">Custom</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Terminology Strictness</Label>
+            <Select
+              value={terminologyStrictness}
+              onValueChange={(value) =>
+                void saveTerminologyStrictness(
+                  value as AgentTerminologyStrictness,
+                )
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="strict">Strict</SelectItem>
+                <SelectItem value="moderate">Moderate</SelectItem>
+                <SelectItem value="relaxed">Relaxed</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div className="space-y-2 md:col-span-2">
             <Label>Base URL</Label>
             <Input
@@ -188,6 +244,16 @@ export function AIAssistantTab({
               onChange={(e) => setAgentBaseUrl(e.target.value)}
               onBlur={() => void saveAgentBaseUrl()}
               disabled={agentRuntime === "claude_cli"}
+            />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label>Custom Domain Instructions (optional)</Label>
+            <Textarea
+              rows={4}
+              value={customDomainInstructions}
+              onChange={(e) => setCustomDomainInstructions(e.target.value)}
+              onBlur={() => void saveCustomDomainInstructions()}
+              placeholder="Add optional domain-specific constraints..."
             />
           </div>
         </div>

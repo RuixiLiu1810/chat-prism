@@ -20,6 +20,9 @@ pub enum AgentTaskKind {
     FileEdit,
     SuggestionOnly,
     Analysis,
+    LiteratureReview,
+    PaperDrafting,
+    PeerReview,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]

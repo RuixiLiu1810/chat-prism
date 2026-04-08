@@ -146,11 +146,19 @@ pub(crate) struct AgentSamplingProfilesConfig {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct AgentDomainConfig {
+    pub domain: String,
+    pub custom_instructions: Option<String>,
+    pub terminology_strictness: String,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct AgentRuntimeConfig {
     pub runtime: String,
     pub provider: String,
     pub model: String,
     pub base_url: String,
     pub api_key: Option<String>,
+    pub domain_config: AgentDomainConfig,
     pub sampling_profiles: AgentSamplingProfilesConfig,
 }

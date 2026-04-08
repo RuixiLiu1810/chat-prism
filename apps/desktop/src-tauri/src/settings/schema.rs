@@ -50,6 +50,11 @@ pub(crate) fn default_global_settings() -> Value {
           "provider": "openai",
           "model": "gpt-5.4",
           "baseUrl": "https://api.openai.com/v1",
+          "domainConfig": {
+            "domain": "general",
+            "customInstructions": null,
+            "terminologyStrictness": "moderate"
+          },
           "samplingProfiles": {
             "editStable": {
               "temperature": 0.2,
@@ -461,6 +466,37 @@ pub(crate) fn sanitize_global_settings(input: &Value) -> Value {
         get_in(input, &["integrations", "agent", "baseUrl"]),
         "https://api.openai.com/v1",
     );
+    let agent_domain = get_enum(
+        get_in(input, &["integrations", "agent", "domainConfig", "domain"]),
+        &["general", "biomedical", "chemistry", "custom"],
+        "general",
+    );
+    let agent_custom_instructions = get_in(
+        input,
+        &[
+            "integrations",
+            "agent",
+            "domainConfig",
+            "customInstructions",
+        ],
+    )
+    .and_then(Value::as_str)
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string);
+    let agent_terminology_strictness = get_enum(
+        get_in(
+            input,
+            &[
+                "integrations",
+                "agent",
+                "domainConfig",
+                "terminologyStrictness",
+            ],
+        ),
+        &["strict", "moderate", "relaxed"],
+        "moderate",
+    );
     let agent_edit_stable_temperature = get_number_in_range(
         get_in(
             input,
@@ -700,6 +736,11 @@ pub(crate) fn sanitize_global_settings(input: &Value) -> Value {
           "provider": agent_provider,
           "model": agent_model,
           "baseUrl": agent_base_url,
+          "domainConfig": {
+            "domain": agent_domain,
+            "customInstructions": agent_custom_instructions,
+            "terminologyStrictness": agent_terminology_strictness
+          },
           "samplingProfiles": {
             "editStable": {
               "temperature": agent_edit_stable_temperature,
@@ -932,6 +973,11 @@ pub(crate) fn resolve_effective_settings(global_input: &Value, project_input: &V
           "provider": "openai",
           "model": "gpt-5.4",
           "baseUrl": "https://api.openai.com/v1",
+          "domainConfig": {
+            "domain": "general",
+            "customInstructions": null,
+            "terminologyStrictness": "moderate"
+          },
           "samplingProfiles": {
             "editStable": {
               "temperature": 0.2,

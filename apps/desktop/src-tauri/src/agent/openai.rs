@@ -579,7 +579,10 @@ pub async fn run_turn_loop(
     let mut transcript_messages = vec![make_text_message("user", &request.prompt)];
 
     let resolved_profile = resolve_turn_profile(request);
-    let instructions = agent_instructions_for_request(runtime_state, request).await;
+    let runtime_settings =
+        settings::load_agent_runtime(&window.app_handle(), Some(&request.project_path))?;
+    let instructions =
+        agent_instructions_for_request(runtime_state, request, Some(&runtime_settings)).await;
     let turn_started_at = Instant::now();
     let mut doc_tool_rounds = 0u32;
     let mut doc_tool_calls = 0u32;

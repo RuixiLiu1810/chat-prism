@@ -62,6 +62,11 @@ const INITIAL_EFFECTIVE: EffectiveSettingsV1 = {
       provider: "openai",
       model: "gpt-5.4",
       baseUrl: "https://api.openai.com/v1",
+      domainConfig: {
+        domain: "general",
+        customInstructions: null,
+        terminologyStrictness: "moderate",
+      },
       samplingProfiles: {
         editStable: {
           temperature: 0.2,

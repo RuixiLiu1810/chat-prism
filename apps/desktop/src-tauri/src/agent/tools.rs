@@ -792,7 +792,10 @@ pub fn check_tool_call_policy(
         });
     }
 
-    if context.task_kind == AgentTaskKind::Analysis
+    if matches!(
+        context.task_kind,
+        AgentTaskKind::Analysis | AgentTaskKind::LiteratureReview | AgentTaskKind::PeerReview
+    )
         && context.has_binary_attachment_context
         && call.tool_name == "run_shell_command"
     {
@@ -810,7 +813,10 @@ pub fn check_tool_call_policy(
         });
     }
 
-    if context.task_kind == AgentTaskKind::Analysis
+    if matches!(
+        context.task_kind,
+        AgentTaskKind::Analysis | AgentTaskKind::LiteratureReview | AgentTaskKind::PeerReview
+    )
         && context.has_binary_attachment_context
         && call.tool_name == "read_file"
         && target.map(is_document_resource_path).unwrap_or(false)

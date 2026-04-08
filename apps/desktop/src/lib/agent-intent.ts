@@ -7,7 +7,10 @@ export type AgentTaskKind =
   | "selection_edit"
   | "file_edit"
   | "suggestion_only"
-  | "analysis";
+  | "analysis"
+  | "literature_review"
+  | "paper_drafting"
+  | "peer_review";
 export type AgentSelectionScope = "none" | "selected_span";
 export type AgentResponseMode = "default" | "reviewable_change" | "suggestion_only";
 export type AgentSamplingProfile =

@@ -3,6 +3,8 @@ import type { AgentSmokeResult, ProviderConnectivityResult, SettingsImportMode }
 export type QueryMode = "fast" | "balanced" | "deep";
 export type AgentProvider = "openai" | "minimax" | "deepseek";
 export type AgentRuntimeKind = "claude_cli" | "local_agent";
+export type AgentDomain = "general" | "biomedical" | "chemistry" | "custom";
+export type AgentTerminologyStrictness = "strict" | "moderate" | "relaxed";
 
 export const panelClass = "space-y-3 rounded-xl border border-sidebar-border/70 bg-sidebar-accent/20 p-4";
 

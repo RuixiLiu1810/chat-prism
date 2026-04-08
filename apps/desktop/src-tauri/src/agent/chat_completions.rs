@@ -827,7 +827,7 @@ pub async fn run_turn_loop(
         })),
     ];
     let resolved_profile = resolve_turn_profile(request);
-    let instructions = agent_instructions_for_request(runtime_state, request).await;
+    let instructions = agent_instructions_for_request(runtime_state, request, Some(&runtime)).await;
     let mut next_messages = transcript_to_chat_messages(&instructions, request, history);
     let turn_started_at = Instant::now();
     let mut doc_tool_rounds = 0u32;
@@ -1202,7 +1202,7 @@ async fn run_turn_loop_silent(
     ];
     let resolved_profile = resolve_turn_profile(request);
     runtime_state.ensure_storage(app).await?;
-    let instructions = agent_instructions_for_request(&runtime_state, request).await;
+    let instructions = agent_instructions_for_request(&runtime_state, request, Some(&runtime)).await;
     let mut next_messages = transcript_to_chat_messages(&instructions, request, history);
     let mut budget = TurnBudget::new(
         max_rounds_for_task(&resolved_profile),

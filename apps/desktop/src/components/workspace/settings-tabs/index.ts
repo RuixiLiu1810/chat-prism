@@ -6,6 +6,8 @@ export {
   type QueryMode,
   type AgentProvider,
   type AgentRuntimeKind,
+  type AgentDomain,
+  type AgentTerminologyStrictness,
   AGENT_PROVIDER_DEFAULTS,
   QUERY_MODE_PRESETS,
   inferNearestQueryMode,

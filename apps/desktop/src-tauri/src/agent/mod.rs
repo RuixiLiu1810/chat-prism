@@ -65,6 +65,16 @@ const AGENT_BASE_INSTRUCTIONS: &str = concat!(
     "Keep responses concise when the real value is in the tool action and resulting reviewable change.\n"
 );
 
+const BIOMEDICAL_DOMAIN_INSTRUCTIONS: &str = concat!(
+    "[Biomedical domain guardrails]\n",
+    "- Use biomedical terminology precisely (gene/protein naming, disease entities, intervention names).\n",
+    "- Do not fabricate citations, datasets, outcomes, statistical values, or trial details.\n",
+    "- When discussing evidence quality, prefer explicit study-design framing (systematic review, RCT, cohort, case-control, case series, expert opinion).\n",
+    "- When claims involve statistics, check for explicit support (effect size, confidence interval, p-value, or equivalent) before making strong conclusions.\n",
+    "- If evidence is incomplete, lower certainty language instead of over-claiming.\n",
+    "- Flag possible ethics/reporting gaps when relevant (IRB/ethics approval, conflicts, CONSORT/PRISMA/STROBE-style reporting expectations).\n",
+);
+
 fn prompt_lower(prompt: &str) -> String {
     prompt.to_lowercase()
 }
@@ -194,6 +204,93 @@ fn prompt_explicitly_requests_deep_analysis(prompt: &str) -> bool {
         || zh.iter().any(|needle| prompt.contains(needle))
 }
 
+fn prompt_requests_literature_review(prompt: &str) -> bool {
+    let lower = prompt_lower(prompt);
+    let en = [
+        "review literature",
+        "literature review",
+        "related work",
+        "find papers",
+        "what does the literature say",
+        "survey papers",
+        "evidence synthesis",
+    ];
+    let zh = [
+        "文献综述",
+        "相关研究",
+        "找文献",
+        "文献调研",
+        "研究现状",
+        "检索文献",
+    ];
+    en.iter().any(|needle| lower.contains(needle))
+        || zh.iter().any(|needle| prompt.contains(needle))
+}
+
+fn prompt_requests_paper_drafting(prompt: &str) -> bool {
+    let lower = prompt_lower(prompt);
+    let en = [
+        "draft section",
+        "draft introduction",
+        "draft methods",
+        "draft results",
+        "draft discussion",
+        "write introduction",
+        "write methods",
+        "write discussion",
+        "generate abstract",
+        "manuscript",
+    ];
+    let zh = [
+        "写引言",
+        "撰写引言",
+        "撰写方法",
+        "撰写结果",
+        "撰写讨论",
+        "草拟讨论",
+        "写摘要",
+        "论文草稿",
+        "论文写作",
+    ];
+    en.iter().any(|needle| lower.contains(needle))
+        || zh.iter().any(|needle| prompt.contains(needle))
+}
+
+fn prompt_requests_peer_review(prompt: &str) -> bool {
+    let lower = prompt_lower(prompt);
+    let en = [
+        "peer review",
+        "review this manuscript",
+        "review this paper",
+        "review comments",
+        "check for issues",
+        "response letter",
+    ];
+    let zh = ["审稿", "审查论文", "评审意见", "找问题", "回复审稿人"];
+    en.iter().any(|needle| lower.contains(needle))
+        || zh.iter().any(|needle| prompt.contains(needle))
+}
+
+fn prompt_explicitly_requests_chinese_output(prompt: &str) -> bool {
+    let lower = prompt_lower(prompt);
+    let en = [
+        "in chinese",
+        "respond in chinese",
+        "answer in chinese",
+        "use chinese",
+    ];
+    let zh = [
+        "用中文",
+        "中文回答",
+        "请用中文",
+        "请中文",
+        "使用中文",
+        "中文输出",
+    ];
+    en.iter().any(|needle| lower.contains(needle))
+        || zh.iter().any(|needle| prompt.contains(needle))
+}
+
 fn has_relevant_resource_evidence(prompt: &str) -> bool {
     prompt.contains("[Relevant resource evidence:")
         || prompt.contains("[Relevant resource matches:")
@@ -206,14 +303,22 @@ pub fn tool_choice_for_task(
     match profile.task_kind {
         AgentTaskKind::SelectionEdit | AgentTaskKind::FileEdit => "required",
         AgentTaskKind::SuggestionOnly => "none",
-        AgentTaskKind::Analysis
+        AgentTaskKind::Analysis | AgentTaskKind::LiteratureReview | AgentTaskKind::PeerReview
             if has_attachment_context(&request.prompt)
                 && has_relevant_resource_evidence(&request.prompt) =>
         {
             "none"
         }
-        AgentTaskKind::Analysis if has_binary_attachment_context(&request.prompt) => "required",
-        AgentTaskKind::General | AgentTaskKind::Analysis => "auto",
+        AgentTaskKind::Analysis | AgentTaskKind::LiteratureReview | AgentTaskKind::PeerReview
+            if has_binary_attachment_context(&request.prompt) =>
+        {
+            "required"
+        }
+        AgentTaskKind::General
+        | AgentTaskKind::Analysis
+        | AgentTaskKind::LiteratureReview
+        | AgentTaskKind::PaperDrafting
+        | AgentTaskKind::PeerReview => "auto",
     }
 }
 
@@ -222,6 +327,9 @@ pub fn max_rounds_for_task(profile: &AgentTurnProfile) -> u32 {
         AgentTaskKind::SuggestionOnly => 2,
         AgentTaskKind::SelectionEdit => 8,
         AgentTaskKind::FileEdit => 10,
+        AgentTaskKind::LiteratureReview => 15,
+        AgentTaskKind::PaperDrafting => 12,
+        AgentTaskKind::PeerReview => 10,
         AgentTaskKind::Analysis | AgentTaskKind::General => 10,
     }
 }
@@ -242,6 +350,12 @@ pub fn resolve_turn_profile(request: &AgentTurnDescriptor) -> AgentTurnProfile {
             } else if prompt_explicitly_requests_edit(&request.prompt) {
                 profile.task_kind = AgentTaskKind::SelectionEdit;
             }
+        } else if prompt_requests_peer_review(&request.prompt) {
+            profile.task_kind = AgentTaskKind::PeerReview;
+        } else if prompt_requests_paper_drafting(&request.prompt) {
+            profile.task_kind = AgentTaskKind::PaperDrafting;
+        } else if prompt_requests_literature_review(&request.prompt) {
+            profile.task_kind = AgentTaskKind::LiteratureReview;
         } else if has_attachment_context(&request.prompt) {
             if prompt_explicitly_requests_suggestions(&request.prompt) {
                 profile.task_kind = AgentTaskKind::SuggestionOnly;
@@ -259,7 +373,11 @@ pub fn resolve_turn_profile(request: &AgentTurnDescriptor) -> AgentTurnProfile {
                 AgentResponseMode::ReviewableChange
             }
             AgentTaskKind::SuggestionOnly => AgentResponseMode::SuggestionOnly,
-            AgentTaskKind::General | AgentTaskKind::Analysis => AgentResponseMode::Default,
+            AgentTaskKind::General
+            | AgentTaskKind::Analysis
+            | AgentTaskKind::LiteratureReview
+            | AgentTaskKind::PaperDrafting
+            | AgentTaskKind::PeerReview => AgentResponseMode::Default,
         };
     }
 
@@ -268,7 +386,13 @@ pub fn resolve_turn_profile(request: &AgentTurnDescriptor) -> AgentTurnProfile {
             AgentTaskKind::SelectionEdit | AgentTaskKind::FileEdit => {
                 AgentSamplingProfile::EditStable
             }
-            AgentTaskKind::SuggestionOnly | AgentTaskKind::Analysis => {
+            AgentTaskKind::SuggestionOnly => {
+                AgentSamplingProfile::AnalysisBalanced
+            }
+            AgentTaskKind::Analysis
+            | AgentTaskKind::LiteratureReview
+            | AgentTaskKind::PaperDrafting
+            | AgentTaskKind::PeerReview => {
                 if has_attachment_context(&request.prompt)
                     || prompt_explicitly_requests_deep_analysis(&request.prompt)
                 {
@@ -287,9 +411,39 @@ pub fn resolve_turn_profile(request: &AgentTurnDescriptor) -> AgentTurnProfile {
 pub fn build_agent_instructions_with_work_state(
     request: &AgentTurnDescriptor,
     work_state: Option<&AgentSessionWorkState>,
+    runtime_config: Option<&settings::AgentRuntimeConfig>,
 ) -> String {
     let mut instructions = AGENT_BASE_INSTRUCTIONS.to_string();
     let profile = resolve_turn_profile(request);
+
+    if prompt_explicitly_requests_chinese_output(&request.prompt) {
+        instructions.push_str(
+            "Output language policy: respond in Chinese for this turn because the user explicitly requested Chinese output.\n",
+        );
+    } else {
+        instructions.push_str(
+            "Output language policy: respond in English by default. Only switch to Chinese when the user explicitly asks for Chinese output.\n",
+        );
+    }
+
+    if let Some(runtime) = runtime_config {
+        if runtime.domain_config.domain == "biomedical" {
+            instructions.push('\n');
+            instructions.push_str(BIOMEDICAL_DOMAIN_INSTRUCTIONS);
+            instructions.push('\n');
+        }
+        instructions.push_str(&format!(
+            "Domain terminology strictness: {}.\n",
+            runtime.domain_config.terminology_strictness
+        ));
+        if let Some(custom) = runtime.domain_config.custom_instructions.as_deref() {
+            instructions.push_str("[Custom domain instructions]\n");
+            instructions.push_str(custom);
+            if !custom.ends_with('\n') {
+                instructions.push('\n');
+            }
+        }
+    }
 
     match profile.task_kind {
         AgentTaskKind::SelectionEdit => {
@@ -317,6 +471,21 @@ Stay in suggestion mode and avoid edit tools unless the user explicitly asks to 
         AgentTaskKind::Analysis => {
             instructions.push_str(
                 "This turn is classified as analysis. Prefer clear reasoning and targeted file reads over file edits unless the user explicitly asks for changes.\n",
+            );
+        }
+        AgentTaskKind::LiteratureReview => {
+            instructions.push_str(
+                "This turn is classified as literature review. Build evidence-grounded synthesis, distinguish study designs, and clearly separate findings from uncertainty.\n",
+            );
+        }
+        AgentTaskKind::PaperDrafting => {
+            instructions.push_str(
+                "This turn is classified as paper drafting. Produce structured manuscript-ready prose, preserve scientific caution, and keep section-level coherence.\n",
+            );
+        }
+        AgentTaskKind::PeerReview => {
+            instructions.push_str(
+                "This turn is classified as peer review. Prioritize actionable findings with severity labels and tie each critique to concrete evidence from the manuscript/resources.\n",
             );
         }
         AgentTaskKind::General => {
@@ -423,7 +592,12 @@ fn selective_session_recall(
 
     let should_recall_target = matches!(
         profile.task_kind,
-        AgentTaskKind::SelectionEdit | AgentTaskKind::FileEdit | AgentTaskKind::Analysis
+        AgentTaskKind::SelectionEdit
+            | AgentTaskKind::FileEdit
+            | AgentTaskKind::Analysis
+            | AgentTaskKind::LiteratureReview
+            | AgentTaskKind::PaperDrafting
+            | AgentTaskKind::PeerReview
     ) || work_state.pending_state.is_some();
     if should_recall_target {
         if let Some(target) = work_state.current_target.as_deref() {
@@ -435,7 +609,11 @@ fn selective_session_recall(
         let should_include_activity = work_state.pending_state.is_some()
             || matches!(
                 profile.task_kind,
-                AgentTaskKind::Analysis | AgentTaskKind::General
+                AgentTaskKind::Analysis
+                    | AgentTaskKind::General
+                    | AgentTaskKind::LiteratureReview
+                    | AgentTaskKind::PaperDrafting
+                    | AgentTaskKind::PeerReview
             )
             || lines.len() < 2;
         if should_include_activity {
@@ -461,17 +639,18 @@ fn selective_session_recall(
 
 #[allow(dead_code)]
 pub fn build_agent_instructions(request: &AgentTurnDescriptor) -> String {
-    build_agent_instructions_with_work_state(request, None)
+    build_agent_instructions_with_work_state(request, None, None)
 }
 
 pub async fn agent_instructions_for_request(
     state: &AgentRuntimeState,
     request: &AgentTurnDescriptor,
+    runtime_config: Option<&settings::AgentRuntimeConfig>,
 ) -> String {
     let work_state = state
         .work_state_for_prompt(&request.tab_id, request.local_session_id.as_deref())
         .await;
-    build_agent_instructions_with_work_state(request, Some(&work_state))
+    build_agent_instructions_with_work_state(request, Some(&work_state), runtime_config)
 }
 
 fn emit_agent_event(window: &WebviewWindow, tab_id: &str, payload: AgentEventPayload) {
@@ -628,6 +807,9 @@ mod prompt_tests {
         AgentTurnProfile,
     };
     use crate::agent::session::AgentSessionWorkState;
+    use crate::settings::{
+        AgentDomainConfig, AgentRuntimeConfig, AgentSamplingConfig, AgentSamplingProfilesConfig,
+    };
 
     fn make_request(prompt: &str, turn_profile: Option<AgentTurnProfile>) -> AgentTurnDescriptor {
         AgentTurnDescriptor {
@@ -638,6 +820,43 @@ mod prompt_tests {
             local_session_id: None,
             previous_response_id: None,
             turn_profile,
+        }
+    }
+
+    fn make_runtime(domain: &str, custom: Option<&str>) -> AgentRuntimeConfig {
+        AgentRuntimeConfig {
+            runtime: "local_agent".to_string(),
+            provider: "minimax".to_string(),
+            model: "MiniMax-M2.5".to_string(),
+            base_url: "https://api.minimax.io/v1".to_string(),
+            api_key: None,
+            domain_config: AgentDomainConfig {
+                domain: domain.to_string(),
+                custom_instructions: custom.map(str::to_string),
+                terminology_strictness: "moderate".to_string(),
+            },
+            sampling_profiles: AgentSamplingProfilesConfig {
+                edit_stable: AgentSamplingConfig {
+                    temperature: 0.2,
+                    top_p: 0.9,
+                    max_tokens: 8192,
+                },
+                analysis_balanced: AgentSamplingConfig {
+                    temperature: 0.4,
+                    top_p: 0.9,
+                    max_tokens: 6144,
+                },
+                analysis_deep: AgentSamplingConfig {
+                    temperature: 0.3,
+                    top_p: 0.92,
+                    max_tokens: 12288,
+                },
+                chat_flexible: AgentSamplingConfig {
+                    temperature: 0.7,
+                    top_p: 0.95,
+                    max_tokens: 4096,
+                },
+            },
         }
     }
 
@@ -736,6 +955,52 @@ mod prompt_tests {
     }
 
     #[test]
+    fn routes_paper_drafting_intent_to_paper_drafting_task_kind() {
+        let request = make_request("Please draft the methods section for this manuscript.", None);
+        let profile = resolve_turn_profile(&request);
+        assert_eq!(profile.task_kind, AgentTaskKind::PaperDrafting);
+    }
+
+    #[test]
+    fn routes_literature_review_intent_to_literature_review_task_kind() {
+        let request = make_request("请做一个文献综述，找相关研究并总结证据。", None);
+        let profile = resolve_turn_profile(&request);
+        assert_eq!(profile.task_kind, AgentTaskKind::LiteratureReview);
+    }
+
+    #[test]
+    fn routes_peer_review_intent_to_peer_review_task_kind() {
+        let request = make_request("Please review this manuscript and list major issues.", None);
+        let profile = resolve_turn_profile(&request);
+        assert_eq!(profile.task_kind, AgentTaskKind::PeerReview);
+    }
+
+    #[test]
+    fn language_policy_defaults_to_english_and_switches_to_chinese_on_explicit_request() {
+        let default_request = make_request("Summarize the attached evidence.", None);
+        let default_instructions = build_agent_instructions(&default_request);
+        assert!(default_instructions.contains("respond in English by default"));
+
+        let zh_request = make_request("请用中文总结这篇文章。", None);
+        let zh_instructions = build_agent_instructions(&zh_request);
+        assert!(zh_instructions.contains("respond in Chinese for this turn"));
+    }
+
+    #[test]
+    fn biomedical_domain_instructions_are_injected_when_runtime_domain_is_biomedical() {
+        let request = make_request("Summarize the trial results.", None);
+        let runtime = make_runtime("biomedical", Some("Prefer CONSORT-aligned critique."));
+        let instructions = build_agent_instructions_with_work_state(
+            &request,
+            None,
+            Some(&runtime),
+        );
+        assert!(instructions.contains("[Biomedical domain guardrails]"));
+        assert!(instructions.contains("[Custom domain instructions]"));
+        assert!(instructions.contains("CONSORT-aligned critique"));
+    }
+
+    #[test]
     fn binary_attachment_analysis_prefers_prompt_evidence_over_extra_tool_turns() {
         let request = make_request(
             "[Attached resource: @paper.pdf (pdf)]\n[Resource path: attachments/paper.pdf]\n[Attached excerpt:\nhydrophobic surface treatment\n]\n[Relevant resource evidence:\n- Document: attachments/paper.pdf (pdf)\n  - Page 4: hydrophobic surface treatment was evaluated by contact angle measurements.\n]\n\n哪篇文章提到疏水性相关实验",
@@ -800,7 +1065,8 @@ mod prompt_tests {
             pending_target: None,
         };
 
-        let instructions = build_agent_instructions_with_work_state(&request, Some(&work_state));
+        let instructions =
+            build_agent_instructions_with_work_state(&request, Some(&work_state), None);
         assert!(instructions.contains("[Selective session recall]"));
         assert!(instructions.contains(
             "Recent objective: Compare the attached papers for hydrophobic experiments."
@@ -830,7 +1096,8 @@ mod prompt_tests {
             pending_target: Some("main.tex".to_string()),
         };
 
-        let instructions = build_agent_instructions_with_work_state(&request, Some(&work_state));
+        let instructions =
+            build_agent_instructions_with_work_state(&request, Some(&work_state), None);
         assert!(instructions.contains("Pending state: review_ready via patch_file on main.tex"));
         assert!(instructions.contains("Working target: main.tex"));
         assert!(instructions.contains("Recent objective: tighten the related work section"));

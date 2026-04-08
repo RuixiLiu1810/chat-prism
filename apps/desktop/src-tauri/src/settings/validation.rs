@@ -335,6 +335,55 @@ pub(crate) fn validate_global_patch(patch: &Value) -> Vec<SettingsFieldError> {
                                                 "integrations.agent.baseUrl",
                                                 &mut errors,
                                             ),
+                                            "domainConfig" => {
+                                                if let Some(domain_cfg) = validate_object(
+                                                    av,
+                                                    "integrations.agent.domainConfig",
+                                                    &mut errors,
+                                                ) {
+                                                    for (dk, dv) in domain_cfg {
+                                                        match dk.as_str() {
+                                                            "domain" => validate_enum(
+                                                                dv,
+                                                                "integrations.agent.domainConfig.domain",
+                                                                &[
+                                                                    "general",
+                                                                    "biomedical",
+                                                                    "chemistry",
+                                                                    "custom",
+                                                                ],
+                                                                &mut errors,
+                                                            ),
+                                                            "customInstructions" => {
+                                                                if !(dv.is_string()
+                                                                    || dv.is_null())
+                                                                {
+                                                                    push_error(
+                                                                        &mut errors,
+                                                                        "integrations.agent.domainConfig.customInstructions",
+                                                                        "must be a string or null",
+                                                                    );
+                                                                }
+                                                            }
+                                                            "terminologyStrictness" => validate_enum(
+                                                                dv,
+                                                                "integrations.agent.domainConfig.terminologyStrictness",
+                                                                &[
+                                                                    "strict",
+                                                                    "moderate",
+                                                                    "relaxed",
+                                                                ],
+                                                                &mut errors,
+                                                            ),
+                                                            _ => push_error(
+                                                                &mut errors,
+                                                                "integrations.agent.domainConfig",
+                                                                "unknown field",
+                                                            ),
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             "samplingProfiles" => {
                                                 if let Some(profiles) = validate_object(
                                                     av,

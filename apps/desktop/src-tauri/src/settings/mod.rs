@@ -18,6 +18,7 @@ pub use types::SettingsResetArgs;
 pub use types::SettingsSetArgs;
 
 pub(crate) use types::AgentRuntimeConfig;
+pub(crate) use types::AgentDomainConfig;
 pub(crate) use types::AgentSamplingConfig;
 pub(crate) use types::AgentSamplingProfilesConfig;
 pub(crate) use types::CitationLlmRuntimeConfig;
@@ -352,6 +353,37 @@ pub(crate) fn load_agent_runtime(
         get_in(&effective, &["integrations", "agent", "baseUrl"]),
         "https://api.openai.com/v1",
     );
+    let domain = get_enum(
+        get_in(&effective, &["integrations", "agent", "domainConfig", "domain"]),
+        &["general", "biomedical", "chemistry", "custom"],
+        "general",
+    );
+    let terminology_strictness = get_enum(
+        get_in(
+            &effective,
+            &[
+                "integrations",
+                "agent",
+                "domainConfig",
+                "terminologyStrictness",
+            ],
+        ),
+        &["strict", "moderate", "relaxed"],
+        "moderate",
+    );
+    let custom_instructions = get_in(
+        &effective,
+        &[
+            "integrations",
+            "agent",
+            "domainConfig",
+            "customInstructions",
+        ],
+    )
+    .and_then(Value::as_str)
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string);
     let api_key = resolve_secret_value(
         &secret_loaded.envelope.data,
         &["integrations", "agent", "apiKey"],
@@ -397,6 +429,11 @@ pub(crate) fn load_agent_runtime(
         model,
         base_url,
         api_key,
+        domain_config: AgentDomainConfig {
+            domain,
+            custom_instructions,
+            terminology_strictness,
+        },
         sampling_profiles: AgentSamplingProfilesConfig {
             edit_stable: read_sampling("editStable", (0.2, 0.9, 8192)),
             analysis_balanced: read_sampling("analysisBalanced", (0.4, 0.9, 6144)),

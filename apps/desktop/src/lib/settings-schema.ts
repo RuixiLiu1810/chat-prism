@@ -13,6 +13,8 @@ export type QueryEmbeddingProvider = "none" | "local_embedding";
 export type LogLevel = "info" | "debug" | "warn" | "error";
 export type AgentProvider = "openai" | "minimax" | "deepseek";
 export type AgentRuntimeKind = "claude_cli" | "local_agent";
+export type AgentDomain = "general" | "biomedical" | "chemistry" | "custom";
+export type AgentTerminologyStrictness = "strict" | "moderate" | "relaxed";
 
 export interface AgentSamplingPreset {
   temperature: number;
@@ -60,6 +62,11 @@ export interface GlobalSettingsV1 {
       provider: AgentProvider;
       model: string;
       baseUrl: string;
+      domainConfig: {
+        domain: AgentDomain;
+        customInstructions: string | null;
+        terminologyStrictness: AgentTerminologyStrictness;
+      };
       samplingProfiles: {
         editStable: AgentSamplingPreset;
         analysisBalanced: AgentSamplingPreset;
@@ -193,6 +200,11 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettingsV1 = {
       provider: "openai",
       model: "gpt-5.4",
       baseUrl: "https://api.openai.com/v1",
+      domainConfig: {
+        domain: "general",
+        customInstructions: null,
+        terminologyStrictness: "moderate",
+      },
       samplingProfiles: {
         editStable: {
           temperature: 0.2,
@@ -478,6 +490,7 @@ export function sanitizeGlobalSettings(input: unknown): GlobalSettingsV1 {
   const citationSearchQueryExecution = asRecord(citationSearch.queryExecution);
   const integrations = asRecord(root.integrations);
   const agent = asRecord(integrations.agent);
+  const agentDomainConfig = asRecord(agent.domainConfig);
   const agentSamplingProfiles = asRecord(agent.samplingProfiles);
   const agentEditStable = asRecord(agentSamplingProfiles.editStable);
   const agentAnalysisBalanced = asRecord(agentSamplingProfiles.analysisBalanced);
@@ -640,6 +653,22 @@ export function sanitizeGlobalSettings(input: unknown): GlobalSettingsV1 {
           agent.baseUrl,
           DEFAULT_GLOBAL_SETTINGS.integrations.agent.baseUrl,
         ),
+        domainConfig: {
+          domain: pickEnum(
+            agentDomainConfig.domain,
+            ["general", "biomedical", "chemistry", "custom"],
+            DEFAULT_GLOBAL_SETTINGS.integrations.agent.domainConfig.domain,
+          ),
+          customInstructions: pickStringOrNull(
+            agentDomainConfig.customInstructions,
+          ),
+          terminologyStrictness: pickEnum(
+            agentDomainConfig.terminologyStrictness,
+            ["strict", "moderate", "relaxed"],
+            DEFAULT_GLOBAL_SETTINGS.integrations.agent.domainConfig
+              .terminologyStrictness,
+          ),
+        },
         samplingProfiles: {
           editStable: {
             temperature: pickNumberInRange(

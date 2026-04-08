@@ -30,6 +30,8 @@ import {
   type QueryMode,
   type AgentProvider,
   type AgentRuntimeKind,
+  type AgentDomain,
+  type AgentTerminologyStrictness,
 } from "./settings-tabs";
 
 interface SettingsDialogProps {
@@ -71,6 +73,10 @@ export function SettingsDialog({
   const [agentProvider, setAgentProvider] = useState<AgentProvider>("openai");
   const [agentModel, setAgentModel] = useState("gpt-5.4");
   const [agentBaseUrl, setAgentBaseUrl] = useState("https://api.openai.com/v1");
+  const [agentDomain, setAgentDomain] = useState<AgentDomain>("general");
+  const [terminologyStrictness, setTerminologyStrictness] =
+    useState<AgentTerminologyStrictness>("moderate");
+  const [customDomainInstructions, setCustomDomainInstructions] = useState("");
   const [agentEditStableTemperature, setAgentEditStableTemperature] =
     useState("0.2");
   const [agentEditStableTopP, setAgentEditStableTopP] = useState("0.9");
@@ -149,6 +155,13 @@ export function SettingsDialog({
     setAgentProvider(effective.integrations.agent.provider);
     setAgentModel(effective.integrations.agent.model);
     setAgentBaseUrl(effective.integrations.agent.baseUrl);
+    setAgentDomain(effective.integrations.agent.domainConfig.domain);
+    setTerminologyStrictness(
+      effective.integrations.agent.domainConfig.terminologyStrictness,
+    );
+    setCustomDomainInstructions(
+      effective.integrations.agent.domainConfig.customInstructions ?? "",
+    );
     setAgentEditStableTemperature(
       String(effective.integrations.agent.samplingProfiles.editStable.temperature),
     );
@@ -235,6 +248,9 @@ export function SettingsDialog({
     effective.integrations.agent.provider,
     effective.integrations.agent.model,
     effective.integrations.agent.baseUrl,
+    effective.integrations.agent.domainConfig.domain,
+    effective.integrations.agent.domainConfig.terminologyStrictness,
+    effective.integrations.agent.domainConfig.customInstructions,
     effective.integrations.agent.samplingProfiles.editStable.temperature,
     effective.integrations.agent.samplingProfiles.editStable.topP,
     effective.integrations.agent.samplingProfiles.editStable.maxTokens,
@@ -536,6 +552,56 @@ export function SettingsDialog({
         integrations: {
           agent: {
             baseUrl: agentBaseUrl.trim() || "https://api.openai.com/v1",
+          },
+        },
+      },
+      projectRoot,
+    );
+  };
+
+  const saveAgentDomain = async (domain: AgentDomain) => {
+    setAgentDomain(domain);
+    await patchGlobal(
+      {
+        integrations: {
+          agent: {
+            domainConfig: {
+              domain,
+            },
+          },
+        },
+      },
+      projectRoot,
+    );
+  };
+
+  const saveTerminologyStrictness = async (
+    value: AgentTerminologyStrictness,
+  ) => {
+    setTerminologyStrictness(value);
+    await patchGlobal(
+      {
+        integrations: {
+          agent: {
+            domainConfig: {
+              terminologyStrictness: value,
+            },
+          },
+        },
+      },
+      projectRoot,
+    );
+  };
+
+  const saveCustomDomainInstructions = async () => {
+    const normalized = customDomainInstructions.trim();
+    await patchGlobal(
+      {
+        integrations: {
+          agent: {
+            domainConfig: {
+              customInstructions: normalized.length > 0 ? normalized : null,
+            },
           },
         },
       },
@@ -1108,6 +1174,13 @@ export function SettingsDialog({
                 saveAgentProvider={saveAgentProvider}
                 saveAgentModel={saveAgentModel}
                 saveAgentBaseUrl={saveAgentBaseUrl}
+                agentDomain={agentDomain}
+                saveAgentDomain={saveAgentDomain}
+                terminologyStrictness={terminologyStrictness}
+                saveTerminologyStrictness={saveTerminologyStrictness}
+                customDomainInstructions={customDomainInstructions}
+                setCustomDomainInstructions={setCustomDomainInstructions}
+                saveCustomDomainInstructions={saveCustomDomainInstructions}
                 agentApiKeyInput={agentApiKeyInput}
                 setAgentApiKeyInput={setAgentApiKeyInput}
                 showAgentApiKey={showAgentApiKey}
