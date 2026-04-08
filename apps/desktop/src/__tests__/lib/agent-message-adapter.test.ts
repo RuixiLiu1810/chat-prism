@@ -104,4 +104,21 @@ describe("agent-message-adapter", () => {
 
     expect(sanitized).toBe("我先试着提取内容。\n再继续分析。");
   });
+
+  it("derives a readable preview from structured writing-tool payloads", () => {
+    const adapted = adaptToolResultDisplayContent({
+      toolName: "check_consistency",
+      findings: [
+        {
+          severity: "major",
+          message: "Abbreviation 'MRI' appears multiple times without definition.",
+        },
+      ],
+      approvalRequired: false,
+      reviewArtifact: false,
+    });
+
+    expect(adapted.textPreview).toContain("Consistency findings");
+    expect(adapted.textPreview).toContain("MRI");
+  });
 });

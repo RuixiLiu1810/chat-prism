@@ -15,6 +15,8 @@ mod edit;
 mod shell;
 #[path = "tools/workspace.rs"]
 mod workspace;
+#[path = "tools/writing.rs"]
+mod writing;
 
 use super::document_artifacts::{
     is_document_resource_path, load_document_artifact, resource_kind_from_path, DocumentArtifact,
@@ -44,6 +46,10 @@ pub(crate) use edit::{
 };
 pub(crate) use shell::execute_run_shell_command;
 pub(crate) use workspace::{execute_list_files, execute_read_file, execute_search_project};
+pub(crate) use writing::{
+    execute_check_consistency, execute_draft_section, execute_generate_abstract,
+    execute_insert_citation, execute_restructure_outline,
+};
 
 #[derive(Debug, Clone)]
 struct SelectionAnchor {
@@ -72,6 +78,8 @@ pub enum ToolCapabilityClass {
     ReadDocument,
     SearchDocument,
     InspectResource,
+    DraftWriting,
+    ReviewWriting,
     EditPatch,
     EditWrite,
     ListWorkspace,
@@ -111,6 +119,7 @@ pub enum ToolResultShape {
     DocumentExcerpt,
     DocumentSearch,
     ResourceInfo,
+    WritingOutput,
     WorkspaceSearch,
     ReviewArtifact,
     CommandOutput,
@@ -189,6 +198,26 @@ pub fn tool_contract(tool_name: &str) -> AgentToolContract {
             result_shape: ToolResultShape::DocumentSearch,
             parallel_safe: true,
             approval_bucket: "get_document_evidence",
+        },
+        "draft_section" | "restructure_outline" | "generate_abstract" => AgentToolContract {
+            capability_class: ToolCapabilityClass::DraftWriting,
+            resource_scope: ToolResourceScope::Workspace,
+            approval_policy: ToolApprovalPolicy::Never,
+            review_policy: ToolReviewPolicy::None,
+            suspend_behavior: ToolSuspendBehavior::None,
+            result_shape: ToolResultShape::WritingOutput,
+            parallel_safe: true,
+            approval_bucket: "writing_draft",
+        },
+        "check_consistency" | "insert_citation" => AgentToolContract {
+            capability_class: ToolCapabilityClass::ReviewWriting,
+            resource_scope: ToolResourceScope::Workspace,
+            approval_policy: ToolApprovalPolicy::Never,
+            review_policy: ToolReviewPolicy::None,
+            suspend_behavior: ToolSuspendBehavior::None,
+            result_shape: ToolResultShape::WritingOutput,
+            parallel_safe: true,
+            approval_bucket: "writing_review",
         },
         "replace_selected_text" | "apply_text_patch" => AgentToolContract {
             capability_class: ToolCapabilityClass::EditPatch,
@@ -274,6 +303,8 @@ pub fn tool_display_kind(tool_name: &str) -> &'static str {
         ToolCapabilityClass::ReadDocument => "document_read",
         ToolCapabilityClass::SearchDocument => "document_search",
         ToolCapabilityClass::InspectResource => "resource_info",
+        ToolCapabilityClass::DraftWriting => "writing_draft",
+        ToolCapabilityClass::ReviewWriting => "writing_review",
         ToolCapabilityClass::EditPatch => "edit_patch",
         ToolCapabilityClass::EditWrite => "edit_write",
         ToolCapabilityClass::ListWorkspace | ToolCapabilityClass::SearchWorkspace => {
@@ -294,6 +325,16 @@ fn make_tool_spec(name: &str, description: &str, input_schema: Value) -> AgentTo
         input_schema,
         contract: tool_contract(name),
     }
+}
+
+fn writing_tools_enabled() -> bool {
+    std::env::var("PRISM_AGENT_WRITING_TOOLS")
+        .ok()
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized != "0" && normalized != "false" && normalized != "off"
+        })
+        .unwrap_or(true)
 }
 
 #[derive(Debug, Clone)]
@@ -349,7 +390,11 @@ pub struct ToolExecutionPolicyContext {
 }
 
 pub fn default_tool_specs() -> Vec<AgentToolSpec> {
-    vec![
+    build_default_tool_specs(writing_tools_enabled())
+}
+
+fn build_default_tool_specs(include_writing_tools: bool) -> Vec<AgentToolSpec> {
+    let mut specs = vec![
         make_tool_spec(
             "read_file",
             "Read a text file from the current project. Supported: source code, markdown, JSON, CSV, and plain text. Do not use this tool for PDF, DOCX, images, or other binary resources.",
@@ -376,6 +421,93 @@ pub fn default_tool_specs() -> Vec<AgentToolSpec> {
                 "additionalProperties": false
             }),
         ),
+    ];
+
+    if include_writing_tools {
+        specs.extend([
+            make_tool_spec(
+                "draft_section",
+                "Draft a manuscript section from structured key points. Use this for first-pass writing in English academic style, then refine with follow-up edits.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "section_type": { "type": "string", "description": "Section type such as introduction, methods, results, discussion, or conclusion." },
+                        "key_points": {
+                            "description": "Core points to include. Pass either an array of strings or a newline-delimited string.",
+                            "oneOf": [
+                                { "type": "array", "items": { "type": "string" } },
+                                { "type": "string" }
+                            ]
+                        },
+                        "tone": { "type": "string", "description": "Optional writing tone (for example: formal, concise, persuasive)." },
+                        "target_words": { "type": "integer", "description": "Optional target word count." },
+                        "citation_keys": { "type": "array", "items": { "type": "string" }, "description": "Optional citation keys to weave into the draft." },
+                        "output_format": { "type": "string", "description": "Optional output format: markdown | latex | plain." }
+                    },
+                    "required": ["section_type", "key_points"],
+                    "additionalProperties": false
+                }),
+            ),
+            make_tool_spec(
+                "restructure_outline",
+                "Restructure a manuscript outline into a coherent section order with rationale per section.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "outline": { "type": "string", "description": "Optional free-form outline text." },
+                        "sections": { "type": "array", "items": { "type": "string" }, "description": "Optional explicit section list." },
+                        "manuscript_type": { "type": "string", "description": "Optional manuscript type: imrad | review | case_report | methods." }
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            make_tool_spec(
+                "check_consistency",
+                "Run consistency checks on manuscript text: abbreviations, numbering, terminology, placeholders, and citation marker style.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Optional project-relative path of the manuscript file." },
+                        "text": { "type": "string", "description": "Optional inline manuscript text if path is not provided." }
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            make_tool_spec(
+                "generate_abstract",
+                "Generate a draft abstract from manuscript text with optional structured mode and word limit.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Optional project-relative manuscript path." },
+                        "text": { "type": "string", "description": "Optional inline manuscript text if path is not provided." },
+                        "structured": { "type": "boolean", "description": "Whether to output Background/Methods/Results/Conclusions sections." },
+                        "word_limit": { "type": "integer", "description": "Optional word limit for the abstract." }
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            make_tool_spec(
+                "insert_citation",
+                "Insert a citation marker into text using a provided citation key and style (latex, markdown, or vancouver-like bracket).",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string", "description": "Target text where citation should be inserted." },
+                        "citation_key": { "type": "string", "description": "Primary citation key to insert." },
+                        "citation_keys": { "type": "array", "items": { "type": "string" }, "description": "Optional fallback citation keys; first non-empty key is used." },
+                        "style": { "type": "string", "description": "Optional style: latex | markdown | vancouver." },
+                        "placement": { "type": "string", "description": "Optional placement mode: sentence_end | append." },
+                        "dedupe": { "type": "boolean", "description": "If true, avoid inserting duplicate markers already present in text." }
+                    },
+                    "required": ["text"],
+                    "additionalProperties": false
+                }),
+            ),
+        ]);
+    }
+
+    specs.extend([
         make_tool_spec(
             "replace_selected_text",
             "Replace the currently selected text in a project file without rewriting the rest of the file. Use this for selection-scoped edits. REQUIREMENT: expected_selected_text must match the selected file content exactly, including whitespace and line breaks. If a selection_anchor is present, pass it exactly as provided in the prompt context. Do not use this tool for multi-location or whole-file rewrites.",
@@ -454,7 +586,9 @@ pub fn default_tool_specs() -> Vec<AgentToolSpec> {
                 "additionalProperties": false
             }),
         ),
-    ]
+    ]);
+
+    specs
 }
 
 pub fn to_openai_tool_schema(spec: &AgentToolSpec) -> Value {
@@ -548,6 +682,19 @@ pub async fn execute_tool_call(
         }
         "get_document_evidence" => {
             execute_get_document_evidence(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "draft_section" => execute_draft_section(&call.call_id, parsed_args, cancel_rx).await,
+        "restructure_outline" => {
+            execute_restructure_outline(&call.call_id, parsed_args, cancel_rx).await
+        }
+        "check_consistency" => {
+            execute_check_consistency(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "generate_abstract" => {
+            execute_generate_abstract(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "insert_citation" => {
+            execute_insert_citation(&call.call_id, parsed_args, cancel_rx).await
         }
         "replace_selected_text" => {
             execute_replace_selected_text(
@@ -1473,7 +1620,7 @@ fn files_preview(prefix: &str, lines: &[String], truncated: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_tool_specs, ensure_relative_path, execute_apply_text_patch,
+        build_default_tool_specs, default_tool_specs, ensure_relative_path, execute_apply_text_patch,
         execute_read_document_excerpt, execute_read_file, execute_replace_selected_text,
         line_col_to_byte_offset, parse_selection_anchor, replace_by_anchor, replace_unique_exact,
         replace_unique_with_trimmed_fallback, to_openai_tool_schema, tool_contract,
@@ -1563,6 +1710,34 @@ mod tests {
         assert!(!names.iter().any(|name| name == "read_document_excerpt"));
         assert!(!names.iter().any(|name| name == "search_document_text"));
         assert!(!names.iter().any(|name| name == "get_document_evidence"));
+    }
+
+    #[test]
+    fn includes_writing_tools_when_enabled() {
+        let names = build_default_tool_specs(true)
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+
+        assert!(names.iter().any(|name| name == "draft_section"));
+        assert!(names.iter().any(|name| name == "restructure_outline"));
+        assert!(names.iter().any(|name| name == "check_consistency"));
+        assert!(names.iter().any(|name| name == "generate_abstract"));
+        assert!(names.iter().any(|name| name == "insert_citation"));
+    }
+
+    #[test]
+    fn excludes_writing_tools_when_disabled() {
+        let names = build_default_tool_specs(false)
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+
+        assert!(!names.iter().any(|name| name == "draft_section"));
+        assert!(!names.iter().any(|name| name == "restructure_outline"));
+        assert!(!names.iter().any(|name| name == "check_consistency"));
+        assert!(!names.iter().any(|name| name == "generate_abstract"));
+        assert!(!names.iter().any(|name| name == "insert_citation"));
     }
 
     #[test]

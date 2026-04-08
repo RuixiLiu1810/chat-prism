@@ -81,6 +81,22 @@ export const ToolWidget: FC<ToolWidgetProps> = ({
         isStreaming={isStreaming}
       />
     );
+  if (
+    name === "draft_section" ||
+    name === "restructure_outline" ||
+    name === "check_consistency" ||
+    name === "generate_abstract" ||
+    name === "insert_citation"
+  ) {
+    return (
+      <WritingWidget
+        toolName={name}
+        input={toolUse.input}
+        result={toolResult}
+        isStreaming={isStreaming}
+      />
+    );
+  }
 
   return (
     <GenericWidget
@@ -89,6 +105,72 @@ export const ToolWidget: FC<ToolWidgetProps> = ({
       result={toolResult}
       isStreaming={isStreaming}
     />
+  );
+};
+
+const WritingWidget: FC<{
+  toolName: string;
+  input: any;
+  result?: ContentBlock;
+  isStreaming?: boolean;
+}> = ({ toolName, input, result, isStreaming }) => {
+  const actionLabel =
+    toolName === "draft_section"
+      ? result
+        ? "Drafted section"
+        : "Drafting section"
+      : toolName === "restructure_outline"
+        ? result
+          ? "Restructured outline"
+          : "Restructuring outline"
+        : toolName === "check_consistency"
+          ? result
+            ? "Checked consistency"
+            : "Checking consistency"
+          : toolName === "generate_abstract"
+            ? result
+              ? "Generated abstract"
+              : "Generating abstract"
+            : result
+              ? "Inserted citation"
+              : "Inserting citation";
+  const context =
+    input?.section_type ||
+    input?.manuscript_type ||
+    input?.path ||
+    input?.citation_key ||
+    "";
+  const preview = getToolDisplay(result)?.textPreview ?? "";
+
+  return (
+    <div className="my-1.5 rounded-lg border border-border bg-muted/50 text-sm">
+      <div className="flex items-center gap-2 px-3 py-2">
+        <StatusIcon result={result} isStreaming={isStreaming} />
+        <SparklesIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate text-muted-foreground">
+          {actionLabel}
+          {context ? (
+            <>
+              {" "}
+              <code className="rounded bg-muted px-1 text-xs">{context}</code>
+            </>
+          ) : null}
+        </span>
+      </div>
+      {!!preview && (
+        <div className="border-border border-t px-3 py-2">
+          <pre
+            className={`max-h-40 overflow-auto whitespace-pre-wrap rounded-md px-2 py-1.5 font-mono text-xs ${
+              result?.is_error
+                ? "bg-destructive/10 text-destructive"
+                : "bg-background/60 text-foreground"
+            }`}
+          >
+            {truncate(preview, 1200)}
+          </pre>
+        </div>
+      )}
+    </div>
   );
 };
 

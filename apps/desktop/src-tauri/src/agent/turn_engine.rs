@@ -408,6 +408,75 @@ pub fn tool_result_feedback_for_model(result: &AgentToolResult) -> String {
                 )
             }
         }
+        "draft_section" => {
+            let section = result
+                .content
+                .get("sectionType")
+                .and_then(Value::as_str)
+                .unwrap_or("section");
+            let draft = result
+                .content
+                .get("draft")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            format!("Drafted {} content:\n{}", section, draft)
+        }
+        "restructure_outline" => {
+            let count = result
+                .content
+                .get("revisedOutline")
+                .and_then(Value::as_array)
+                .map(|items| items.len())
+                .unwrap_or(0);
+            let added = result
+                .content
+                .get("addedSectionCount")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            format!(
+                "Restructured manuscript outline into {} sections ({} added).",
+                count, added
+            )
+        }
+        "check_consistency" => {
+            let summary = result
+                .content
+                .get("summary")
+                .and_then(Value::as_str)
+                .unwrap_or("Consistency scan completed.");
+            let findings = result
+                .content
+                .get("findings")
+                .and_then(Value::as_array)
+                .map(|entries| {
+                    entries
+                        .iter()
+                        .take(3)
+                        .filter_map(|entry| entry.get("message").and_then(Value::as_str))
+                        .map(|message| format!("- {}", message))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if findings.is_empty() {
+                summary.to_string()
+            } else {
+                format!("{}\n{}", summary, findings.join("\n"))
+            }
+        }
+        "generate_abstract" => {
+            let abstract_text = result
+                .content
+                .get("abstract")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            format!("Generated abstract:\n{}", abstract_text)
+        }
+        "insert_citation" => result
+            .content
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "Citation insertion completed.".to_string()),
         _ => {
             if result.preview.trim().is_empty() {
                 "Tool completed successfully.".to_string()

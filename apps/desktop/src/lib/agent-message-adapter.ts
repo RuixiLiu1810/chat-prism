@@ -45,6 +45,43 @@ function readNestedStringField(
   return readStringField(parent, childKeys);
 }
 
+function truncatePreview(value: string, maxChars = 300): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}...`;
+}
+
+function deriveStructuredPreview(record: Record<string, unknown>): string | undefined {
+  const summary = readStringField(record, ["summary"]);
+  if (summary) {
+    return summary;
+  }
+
+  const draft = readStringField(record, ["draft", "abstract"]);
+  if (draft) {
+    return truncatePreview(draft);
+  }
+
+  const findings = record.findings;
+  if (Array.isArray(findings) && findings.length > 0) {
+    const topMessages = findings
+      .slice(0, 3)
+      .map((entry) =>
+        isRecord(entry) ? readStringField(entry, ["message"]) : undefined,
+      )
+      .filter((value): value is string => typeof value === "string");
+    if (topMessages.length > 0) {
+      return `Consistency findings: ${topMessages.join(" | ")}`;
+    }
+  }
+
+  const revisedOutline = record.revisedOutline;
+  if (Array.isArray(revisedOutline) && revisedOutline.length > 0) {
+    return `Restructured outline with ${revisedOutline.length} sections.`;
+  }
+
+  return undefined;
+}
+
 export function stripPseudoToolCallMarkup(content: string): string {
   if (!content.includes("<tool_call>") && !content.includes("[TOOL_CALL]")) {
     return content;
@@ -133,16 +170,19 @@ export function adaptToolResultDisplayContent(
       ? readStringField(reviewArtifactPayload, ["summary"])
       : undefined) ?? readStringField(content, ["summary"]);
 
-    return {
-      kind: "tool_result_display",
-      displayKind: readStringField(content, ["displayKind"]),
-      toolName: readStringField(content, ["toolName"]),
-      status: readStringField(content, ["status"]),
-      textPreview:
-        errorText ??
+  const derivedStructured = deriveStructuredPreview(content);
+
+  return {
+    kind: "tool_result_display",
+    displayKind: readStringField(content, ["displayKind"]),
+    toolName: readStringField(content, ["toolName"]),
+    status: readStringField(content, ["status"]),
+    textPreview:
+      errorText ??
       contentText ??
       approvalReason ??
       summary ??
+      derivedStructured ??
       options?.preview ??
       "",
     isError: Boolean(options?.isError),
