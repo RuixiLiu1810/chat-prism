@@ -183,6 +183,35 @@ function looksLikePaperDraftingIntent(prompt: string): boolean {
   );
 }
 
+function looksLikeLiteratureReviewIntent(prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  const englishSignals = [
+    "literature review",
+    "review literature",
+    "find papers",
+    "what does the literature say",
+    "search studies",
+    "screen papers",
+    "evidence synthesis",
+    "systematic review",
+    "meta-analysis",
+  ];
+  const chineseSignals = [
+    "文献综述",
+    "找文献",
+    "相关研究",
+    "检索文献",
+    "筛选文献",
+    "证据综合",
+    "系统综述",
+    "荟萃分析",
+  ];
+  return (
+    englishSignals.some((needle) => lower.includes(needle)) ||
+    chineseSignals.some((needle) => prompt.includes(needle))
+  );
+}
+
 interface ClaudeSessionInfo {
   session_id: string;
   title: string;
@@ -628,18 +657,31 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
         hasAttachmentContext,
       });
     const existingWorkflow = activeTab?.workflowState;
-    const usePaperDraftingWorkflow =
-      runtime === "local_agent" &&
-      (((existingWorkflow?.workflowType || "").toLowerCase() === "paper_drafting" &&
-        !existingWorkflow?.completed) ||
-        turnProfile.taskKind === "paper_drafting" ||
-        looksLikePaperDraftingIntent(userPrompt));
+    const existingWorkflowType = (
+      existingWorkflow?.workflowType || ""
+    ).toLowerCase();
+    const canContinueWorkflow =
+      (existingWorkflowType === "paper_drafting" ||
+        existingWorkflowType === "literature_review") &&
+      !existingWorkflow?.completed;
+    const workflowTypeToRun =
+      runtime !== "local_agent"
+        ? null
+        : canContinueWorkflow
+          ? existingWorkflowType
+          : turnProfile.taskKind === "paper_drafting" ||
+              looksLikePaperDraftingIntent(userPrompt)
+            ? "paper_drafting"
+            : turnProfile.taskKind === "literature_review" ||
+                looksLikeLiteratureReviewIntent(userPrompt)
+              ? "literature_review"
+              : null;
 
     log.info("invoking chat runtime", {
       promptLength: prompt.length,
       mode: sessionId ? "resume" : "new",
       runtime,
-      workflow: usePaperDraftingWorkflow ? "paper_drafting" : "none",
+      workflow: workflowTypeToRun ?? "none",
     });
 
     try {
@@ -663,8 +705,8 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
           });
         }
       } else {
-        const localSessionId = usePaperDraftingWorkflow
-          ? existingWorkflow
+        const localSessionId = workflowTypeToRun
+          ? canContinueWorkflow
             ? await invoke<string>("agent_continue_workflow", {
                 projectPath,
                 prompt,
@@ -678,7 +720,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
                 prompt,
                 tabId: activeTabId,
                 model: null,
-                workflowType: "paper_drafting",
+                workflowType: workflowTypeToRun,
                 turnProfile,
               })
           : sessionId

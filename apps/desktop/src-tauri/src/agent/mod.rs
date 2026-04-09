@@ -25,13 +25,11 @@ pub use session::{
     AgentRuntimeState, AgentSessionRecord, AgentSessionSummary, AgentSessionWorkState,
 };
 use turn_engine::{emit_tool_resumed, emit_turn_resumed};
-use workflows::{
-    AgentWorkflowState, AgentWorkflowType, WorkflowCheckpointDecision,
-};
 use turn_engine::{
     emit_workflow_checkpoint_approved, emit_workflow_checkpoint_rejected,
     emit_workflow_checkpoint_requested,
 };
+use workflows::{AgentWorkflowState, AgentWorkflowType, WorkflowCheckpointDecision};
 
 use crate::settings;
 
@@ -394,9 +392,7 @@ pub fn resolve_turn_profile(request: &AgentTurnDescriptor) -> AgentTurnProfile {
             AgentTaskKind::SelectionEdit | AgentTaskKind::FileEdit => {
                 AgentSamplingProfile::EditStable
             }
-            AgentTaskKind::SuggestionOnly => {
-                AgentSamplingProfile::AnalysisBalanced
-            }
+            AgentTaskKind::SuggestionOnly => AgentSamplingProfile::AnalysisBalanced,
             AgentTaskKind::Analysis
             | AgentTaskKind::LiteratureReview
             | AgentTaskKind::PaperDrafting
@@ -874,12 +870,14 @@ async fn persist_turn_outcome(
     local_session_id
 }
 
-async fn run_paper_drafting_workflow_turn(
+async fn run_checkpointed_workflow_turn(
     window: &WebviewWindow,
     state: &AgentRuntimeState,
     runtime: &settings::AgentRuntimeConfig,
     request: AgentTurnDescriptor,
     mut workflow: AgentWorkflowState,
+    workflow_type_key: &str,
+    task_kind: AgentTaskKind,
 ) -> Result<String, String> {
     workflow.can_run_stage()?;
     record_request_objective(
@@ -892,7 +890,7 @@ async fn run_paper_drafting_workflow_turn(
 
     let staged_prompt = workflow.build_stage_prompt(&request.prompt);
     let mut staged_profile = resolve_turn_profile(&request);
-    staged_profile.task_kind = AgentTaskKind::PaperDrafting;
+    staged_profile.task_kind = task_kind;
     let staged_request = AgentTurnDescriptor {
         prompt: staged_prompt,
         turn_profile: Some(staged_profile),
@@ -917,9 +915,14 @@ async fn run_paper_drafting_workflow_turn(
         Vec::new()
     };
     let cancel_rx = state.register_cancellation(&request.tab_id).await;
-    let outcome =
-        dispatch_run_turn_loop(window, state, &staged_request, &prior_history, Some(cancel_rx))
-            .await;
+    let outcome = dispatch_run_turn_loop(
+        window,
+        state,
+        &staged_request,
+        &prior_history,
+        Some(cancel_rx),
+    )
+    .await;
     state.clear_cancellation(&request.tab_id).await;
 
     match outcome {
@@ -936,7 +939,7 @@ async fn run_paper_drafting_workflow_turn(
             }
 
             workflow.mark_stage_completed(&request.prompt);
-            let stage = workflow.current_stage.as_str().to_string();
+            let stage = workflow.current_stage.clone();
             let message = format!(
                 "Workflow stage '{}' completed. Approve the checkpoint to continue.",
                 workflow.stage_label()
@@ -947,14 +950,14 @@ async fn run_paper_drafting_workflow_turn(
                     &request.tab_id,
                     Some(&local_session_id),
                     "workflow_checkpoint",
-                    "paper_drafting",
+                    workflow_type_key,
                     None,
                 )
                 .await;
             emit_workflow_checkpoint_requested(
                 Some(window),
                 &request.tab_id,
-                "paper_drafting",
+                workflow_type_key,
                 &stage,
                 &message,
             );
@@ -987,6 +990,44 @@ async fn run_paper_drafting_workflow_turn(
             Err(message)
         }
     }
+}
+
+async fn run_paper_drafting_workflow_turn(
+    window: &WebviewWindow,
+    state: &AgentRuntimeState,
+    runtime: &settings::AgentRuntimeConfig,
+    request: AgentTurnDescriptor,
+    workflow: AgentWorkflowState,
+) -> Result<String, String> {
+    run_checkpointed_workflow_turn(
+        window,
+        state,
+        runtime,
+        request,
+        workflow,
+        AgentWorkflowType::PaperDrafting.as_str(),
+        AgentTaskKind::PaperDrafting,
+    )
+    .await
+}
+
+async fn run_literature_review_workflow_turn(
+    window: &WebviewWindow,
+    state: &AgentRuntimeState,
+    runtime: &settings::AgentRuntimeConfig,
+    request: AgentTurnDescriptor,
+    workflow: AgentWorkflowState,
+) -> Result<String, String> {
+    run_checkpointed_workflow_turn(
+        window,
+        state,
+        runtime,
+        request,
+        workflow,
+        AgentWorkflowType::LiteratureReview.as_str(),
+        AgentTaskKind::LiteratureReview,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -1149,7 +1190,10 @@ mod prompt_tests {
 
     #[test]
     fn routes_paper_drafting_intent_to_paper_drafting_task_kind() {
-        let request = make_request("Please draft the methods section for this manuscript.", None);
+        let request = make_request(
+            "Please draft the methods section for this manuscript.",
+            None,
+        );
         let profile = resolve_turn_profile(&request);
         assert_eq!(profile.task_kind, AgentTaskKind::PaperDrafting);
     }
@@ -1183,11 +1227,7 @@ mod prompt_tests {
     fn biomedical_domain_instructions_are_injected_when_runtime_domain_is_biomedical() {
         let request = make_request("Summarize the trial results.", None);
         let runtime = make_runtime("biomedical", Some("Prefer CONSORT-aligned critique."));
-        let instructions = build_agent_instructions_with_work_state(
-            &request,
-            None,
-            Some(&runtime),
-        );
+        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime));
         assert!(instructions.contains("[Biomedical domain guardrails]"));
         assert!(instructions.contains("[Custom domain instructions]"));
         assert!(instructions.contains("CONSORT-aligned critique"));
@@ -1461,12 +1501,8 @@ pub async fn agent_continue_turn(
         previous_response_id,
         turn_profile,
     };
-    ensure_no_pending_workflow_checkpoint(
-        &state,
-        &tab_id,
-        request.local_session_id.as_deref(),
-    )
-    .await?;
+    ensure_no_pending_workflow_checkpoint(&state, &tab_id, request.local_session_id.as_deref())
+        .await?;
 
     emit_agent_event(
         &window,
@@ -1610,12 +1646,21 @@ pub async fn agent_start_workflow(
         .unwrap_or_else(|| "paper_drafting".to_string())
         .trim()
         .to_ascii_lowercase();
-    if workflow_kind != "paper_drafting" {
-        return Err(format!("Unsupported workflow type: {}", workflow_kind));
-    }
+    let workflow_type = match workflow_kind.as_str() {
+        "paper_drafting" => AgentWorkflowType::PaperDrafting,
+        "literature_review" => AgentWorkflowType::LiteratureReview,
+        _ => return Err(format!("Unsupported workflow type: {}", workflow_kind)),
+    };
 
     state.clear_workflow_state(&tab_id, None).await;
-    let workflow = AgentWorkflowState::new_paper_drafting(&tab_id, &project_path, model.clone());
+    let workflow = match workflow_type {
+        AgentWorkflowType::PaperDrafting => {
+            AgentWorkflowState::new_paper_drafting(&tab_id, &project_path, model.clone())
+        }
+        AgentWorkflowType::LiteratureReview => {
+            AgentWorkflowState::new_literature_review(&tab_id, &project_path, model.clone())
+        }
+    };
     state.upsert_workflow_state(workflow.clone()).await;
 
     emit_agent_event(
@@ -1623,7 +1668,7 @@ pub async fn agent_start_workflow(
         &tab_id,
         AgentEventPayload::Status(AgentStatusEvent {
             stage: "workflow_started".to_string(),
-            message: "Started paper drafting workflow.".to_string(),
+            message: format!("Started {} workflow.", workflow_type.as_str()),
         }),
     );
 
@@ -1636,7 +1681,14 @@ pub async fn agent_start_workflow(
         previous_response_id: None,
         turn_profile,
     };
-    run_paper_drafting_workflow_turn(&window, &state, &runtime, request, workflow).await
+    match workflow_type {
+        AgentWorkflowType::PaperDrafting => {
+            run_paper_drafting_workflow_turn(&window, &state, &runtime, request, workflow).await
+        }
+        AgentWorkflowType::LiteratureReview => {
+            run_literature_review_workflow_turn(&window, &state, &runtime, request, workflow).await
+        }
+    }
 }
 
 #[tauri::command]
@@ -1658,10 +1710,6 @@ pub async fn agent_continue_workflow(
     else {
         return Err("No active workflow found for this tab/session.".to_string());
     };
-    if workflow.workflow_type != AgentWorkflowType::PaperDrafting {
-        return Err("Only paper_drafting workflow is currently supported.".to_string());
-    }
-
     let resolved_local_session_id = local_session_id.or(workflow.local_session_id.clone());
     workflow.tab_id = tab_id.clone();
     workflow.bind_local_session_id(resolved_local_session_id.as_deref());
@@ -1676,7 +1724,14 @@ pub async fn agent_continue_workflow(
         previous_response_id: None,
         turn_profile,
     };
-    run_paper_drafting_workflow_turn(&window, &state, &runtime, request, workflow).await
+    match workflow.workflow_type {
+        AgentWorkflowType::PaperDrafting => {
+            run_paper_drafting_workflow_turn(&window, &state, &runtime, request, workflow).await
+        }
+        AgentWorkflowType::LiteratureReview => {
+            run_literature_review_workflow_turn(&window, &state, &runtime, request, workflow).await
+        }
+    }
 }
 
 #[tauri::command]
@@ -1714,17 +1769,14 @@ pub async fn agent_checkpoint_action(
                 state.upsert_workflow_state(workflow).await;
             }
             let message = if transition.completed {
-                "Workflow completed. You can start a new drafting workflow anytime.".to_string()
+                "Workflow completed. You can start a new workflow anytime.".to_string()
             } else {
-                format!(
-                    "Checkpoint approved. Next stage: {}.",
-                    transition.to_stage
-                )
+                format!("Checkpoint approved. Next stage: {}.", transition.to_stage)
             };
             emit_workflow_checkpoint_approved(
                 Some(&window),
                 &tab_id,
-                "paper_drafting",
+                transition.workflow_type.as_str(),
                 &transition.from_stage,
                 &transition.to_stage,
                 transition.completed,
@@ -1747,11 +1799,13 @@ pub async fn agent_checkpoint_action(
             state.upsert_workflow_state(workflow).await;
             let message = feedback
                 .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "Checkpoint rejected. Revise this stage before continuing.".to_string());
+                .unwrap_or_else(|| {
+                    "Checkpoint rejected. Revise this stage before continuing.".to_string()
+                });
             emit_workflow_checkpoint_rejected(
                 Some(&window),
                 &tab_id,
-                "paper_drafting",
+                transition.workflow_type.as_str(),
                 &transition.to_stage,
                 &message,
             );
