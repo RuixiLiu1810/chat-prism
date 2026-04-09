@@ -55,7 +55,7 @@ pub fn provider_display_name(provider: &str) -> &'static str {
 }
 
 fn provider_supports_transport(provider: &str) -> bool {
-    matches!(provider, "minimax")
+    matches!(provider, "minimax" | "deepseek")
 }
 
 pub fn runtime_status(app: &tauri::AppHandle, provider: &str) -> AgentStatus {
@@ -539,14 +539,15 @@ fn validate_transport_runtime(
     Ok(config)
 }
 
-async fn stream_minimax_response_once(
+async fn stream_chat_completions_response_once(
     window: Option<&WebviewWindow>,
     app: &tauri::AppHandle,
     request: &AgentTurnDescriptor,
+    provider: &str,
     messages: Vec<Value>,
     mut cancel_rx: Option<watch::Receiver<bool>>,
 ) -> Result<StreamChatOutcome, String> {
-    let config = validate_transport_runtime(app, "minimax", Some(&request.project_path))?;
+    let config = validate_transport_runtime(app, provider, Some(&request.project_path))?;
     let api_key = config
         .api_key
         .clone()
@@ -558,7 +559,7 @@ async fn stream_minimax_response_once(
         .unwrap_or(config.model);
     let resolved_profile = resolve_turn_profile(request);
 
-    let body = json!({
+    let mut body = json!({
         "model": model,
         "messages": messages,
         "stream": true,
@@ -567,9 +568,10 @@ async fn stream_minimax_response_once(
             .map(|spec| to_chat_completions_tool_schema(spec, &config.provider))
             .collect::<Vec<_>>(),
         "tool_choice": tool_choice_for_task(request, &resolved_profile),
-        "reasoning_split": true,
     });
-    let mut body = body;
+    if config.provider == "minimax" {
+        body["reasoning_split"] = Value::Bool(true);
+    }
     if let Some((temperature, top_p, max_tokens)) = sampling_profile_params(
         Some(&resolved_profile.sampling_profile),
         Some(&config.sampling_profiles),
@@ -589,7 +591,13 @@ async fn stream_minimax_response_once(
         .body(body.to_string())
         .send()
         .await
-        .map_err(|err| format!("MiniMax request failed: {}", err))?;
+        .map_err(|err| {
+            format!(
+                "{} request failed: {}",
+                provider_display_name(provider),
+                err
+            )
+        })?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -600,8 +608,10 @@ async fn stream_minimax_response_once(
             body
         };
         return Err(format!(
-            "MiniMax chat completions request failed with status {}: {}",
-            status, preview
+            "{} request failed with status {}: {}",
+            provider_display_name(provider),
+            status,
+            preview
         ));
     }
 
@@ -609,7 +619,7 @@ async fn stream_minimax_response_once(
         window,
         &request.tab_id,
         "streaming",
-        "Connected to MiniMax chat completions API.",
+        &format!("Connected to {}.", provider_display_name(provider)),
     );
 
     let mut response = response;
@@ -629,12 +639,16 @@ async fn stream_minimax_response_once(
                     }
                 }
                 chunk = response.chunk() => chunk.map_err(|err| format!("MiniMax streaming read failed: {}", err))?
+
             }
         } else {
-            response
-                .chunk()
-                .await
-                .map_err(|err| format!("MiniMax streaming read failed: {}", err))?
+            response.chunk().await.map_err(|err| {
+                format!(
+                    "{} streaming read failed: {}",
+                    provider_display_name(provider),
+                    err
+                )
+            })?
         };
 
         let Some(chunk) = next_chunk else {
@@ -717,7 +731,7 @@ async fn stream_minimax_response_once(
                         window,
                         &request.tab_id,
                         "completed",
-                        "MiniMax response completed.",
+                        &format!("{} response completed.", provider_display_name(provider)),
                     );
                 }
             }
@@ -804,13 +818,7 @@ pub async fn run_turn_loop(
     runtime_state.ensure_storage(&window.app_handle()).await?;
     let runtime = settings::load_agent_runtime(&window.app_handle(), Some(&request.project_path))?;
     match runtime.provider.as_str() {
-        "minimax" => {}
-        "deepseek" => {
-            return Err(
-                "DeepSeek remains unpromoted for now; MiniMax is the first validated chat-completions provider."
-                    .to_string(),
-            )
-        }
+        "minimax" | "deepseek" => {}
         other => {
             return Err(format!(
                 "{} cannot be handled by chat_completions runtime.",
@@ -847,10 +855,11 @@ pub async fn run_turn_loop(
 
     for round_idx in 0..budget.max_rounds {
         budget.ensure_round_available(round_idx)?;
-        let outcome = stream_minimax_response_once(
+        let outcome = stream_chat_completions_response_once(
             Some(window),
             &window.app_handle(),
             request,
+            &runtime.provider,
             next_messages.clone(),
             budget.clone_abort_rx(),
         )
@@ -996,7 +1005,8 @@ pub async fn run_turn_loop(
     }
 
     Err(format!(
-        "MiniMax tool loop exceeded {} rounds; aborting to avoid an infinite agent loop.",
+        "{} tool loop exceeded {} rounds; aborting to avoid an infinite agent loop.",
+        provider_display_name(&runtime.provider),
         max_rounds_for_task(&resolved_profile)
     ))
 }
@@ -1018,7 +1028,7 @@ async fn smoke_text_round(
 
     let history: Vec<Value> = Vec::new();
     let outcome = match provider {
-        "minimax" => run_turn_loop_silent(app, &request, &history).await?,
+        "minimax" | "deepseek" => run_turn_loop_silent(app, &request, &history).await?,
         other => {
             return Err(format!(
                 "{} smoke test is not wired yet.",
@@ -1063,7 +1073,7 @@ async fn smoke_tool_round(
 
     let history: Vec<Value> = Vec::new();
     let outcome = match provider {
-        "minimax" => run_turn_loop_silent(app, &request, &history).await?,
+        "minimax" | "deepseek" => run_turn_loop_silent(app, &request, &history).await?,
         other => {
             return Err(format!(
                 "{} smoke test is not wired yet.",
@@ -1122,7 +1132,7 @@ async fn smoke_continuation_round(
         turn_profile: None,
     };
     let first_outcome = match provider {
-        "minimax" => run_turn_loop_silent(app, &first_request, &[]).await?,
+        "minimax" | "deepseek" => run_turn_loop_silent(app, &first_request, &[]).await?,
         other => {
             return Err(format!(
                 "{} smoke test is not wired yet.",
@@ -1142,7 +1152,9 @@ async fn smoke_continuation_round(
         turn_profile: None,
     };
     let second_outcome = match provider {
-        "minimax" => run_turn_loop_silent(app, &second_request, &first_outcome.messages).await?,
+        "minimax" | "deepseek" => {
+            run_turn_loop_silent(app, &second_request, &first_outcome.messages).await?
+        }
         other => {
             return Err(format!(
                 "{} smoke test is not wired yet.",
@@ -1178,13 +1190,7 @@ async fn run_turn_loop_silent(
     let runtime_state = AgentRuntimeState::default();
     let runtime = settings::load_agent_runtime(app, Some(&request.project_path))?;
     match runtime.provider.as_str() {
-        "minimax" => {}
-        "deepseek" => {
-            return Err(
-                "DeepSeek remains unpromoted for now; MiniMax is the first validated chat-completions provider."
-                    .to_string(),
-            )
-        }
+        "minimax" | "deepseek" => {}
         other => {
             return Err(format!(
                 "{} cannot be handled by chat_completions runtime.",
@@ -1216,8 +1222,15 @@ async fn run_turn_loop_silent(
     );
     for round_idx in 0..budget.max_rounds {
         budget.ensure_round_available(round_idx)?;
-        let outcome =
-            stream_minimax_response_once(None, app, request, next_messages.clone(), None).await?;
+        let outcome = stream_chat_completions_response_once(
+            None,
+            app,
+            request,
+            &runtime.provider,
+            next_messages.clone(),
+            None,
+        )
+        .await?;
         budget.record_output_text(&outcome.assistant_message.content)?;
         let raw_assistant = raw_assistant_message(&outcome.assistant_message);
 
@@ -1276,7 +1289,8 @@ async fn run_turn_loop_silent(
     }
 
     Err(format!(
-        "MiniMax tool loop exceeded {} rounds; aborting to avoid an infinite agent loop.",
+        "{} tool loop exceeded {} rounds; aborting to avoid an infinite agent loop.",
+        provider_display_name(&runtime.provider),
         max_rounds_for_task(&resolved_profile)
     ))
 }
@@ -1385,7 +1399,10 @@ pub async fn cancel_response(app: &tauri::AppHandle, provider: &str) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_stream_fragment, transcript_to_chat_messages};
+    use super::{
+        merge_stream_fragment, provider_display_name, provider_supports_transport,
+        transcript_to_chat_messages,
+    };
     use crate::agent::build_agent_instructions;
     use crate::agent::provider::AgentTurnDescriptor;
     use serde_json::json;
@@ -1474,6 +1491,17 @@ mod tests {
         assert_eq!(merge_stream_fragment("", "abc"), "abc");
         assert_eq!(merge_stream_fragment("abc", "abcdef"), "def");
         assert_eq!(merge_stream_fragment("abc", "def"), "def");
+    }
+
+    #[test]
+    fn provider_transport_matrix_includes_deepseek() {
+        assert!(provider_supports_transport("minimax"));
+        assert!(provider_supports_transport("deepseek"));
+        assert!(!provider_supports_transport("openai"));
+        assert_eq!(
+            provider_display_name("deepseek"),
+            "DeepSeek Chat Completions"
+        );
     }
 
     #[test]

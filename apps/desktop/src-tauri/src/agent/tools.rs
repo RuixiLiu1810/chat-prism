@@ -1871,7 +1871,8 @@ mod tests {
         execute_apply_text_patch, execute_read_document_excerpt, execute_read_file,
         execute_replace_selected_text, line_col_to_byte_offset, parse_selection_anchor,
         replace_by_anchor, replace_unique_exact, replace_unique_with_trimmed_fallback,
-        to_openai_tool_schema, tool_contract, truncate_file_bytes, AgentToolSpec, MAX_FILE_BYTES,
+        to_chat_completions_tool_schema, to_openai_tool_schema, tool_contract, truncate_file_bytes,
+        AgentToolSpec, MAX_FILE_BYTES,
     };
     use crate::agent::document_artifacts::artifact_path_for;
     use crate::agent::session::AgentRuntimeState;
@@ -1943,6 +1944,47 @@ mod tests {
         assert_eq!(mapped["name"], "read_file");
         assert_eq!(mapped["description"], "Read a file");
         assert_eq!(mapped["parameters"]["type"], "object");
+    }
+
+    #[test]
+    fn chat_completions_schema_strips_additional_properties_for_minimax_and_deepseek() {
+        let tool = AgentToolSpec {
+            name: "demo_tool".to_string(),
+            description: "Demo".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "payload": {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string" }
+                        },
+                        "additionalProperties": false
+                    }
+                },
+                "required": ["payload"],
+                "additionalProperties": false
+            }),
+            contract: tool_contract("read_file"),
+        };
+
+        let minimax = to_chat_completions_tool_schema(&tool, "minimax");
+        let deepseek = to_chat_completions_tool_schema(&tool, "deepseek");
+        let openai = to_chat_completions_tool_schema(&tool, "openai");
+
+        assert!(minimax["function"]["parameters"]
+            .get("additionalProperties")
+            .is_none());
+        assert!(deepseek["function"]["parameters"]
+            .get("additionalProperties")
+            .is_none());
+        assert_eq!(
+            openai["function"]["parameters"]["additionalProperties"],
+            json!(false)
+        );
+        assert!(minimax["function"]["parameters"]["properties"]["payload"]
+            .get("additionalProperties")
+            .is_none());
     }
 
     #[test]
