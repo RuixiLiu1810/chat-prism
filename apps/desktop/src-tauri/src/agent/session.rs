@@ -19,6 +19,7 @@ const PENDING_TURNS_FILE: &str = "pending-turns.json";
 const TOOL_APPROVALS_FILE: &str = "tool-approvals.json";
 const TOOL_EXECUTION_LOG_FILE: &str = "tool-execution.jsonl";
 const WORKFLOW_STATES_FILE: &str = "workflow-states.json";
+const SESSION_WORK_STATES_FILE: &str = "session-work-states.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,6 +127,23 @@ pub struct AgentSessionWorkState {
     pub pending_state: Option<String>,
     pub pending_tool_name: Option<String>,
     pub pending_target: Option<String>,
+    #[serde(default)]
+    pub collected_references: Vec<CollectedReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectedReference {
+    pub doi: Option<String>,
+    pub pmid: Option<String>,
+    pub title: String,
+    pub authors: Vec<String>,
+    pub year: Option<u32>,
+    pub journal: Option<String>,
+    pub abstract_text: Option<String>,
+    pub user_notes: Option<String>,
+    pub relevance_tag: Option<String>,
+    pub added_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -206,13 +224,18 @@ impl AgentRuntimeState {
         let approvals_path = base_dir.join(TOOL_APPROVALS_FILE);
         let pending_path = base_dir.join(PENDING_TURNS_FILE);
         let workflows_path = base_dir.join(WORKFLOW_STATES_FILE);
+        let session_work_states_path = base_dir.join(SESSION_WORK_STATES_FILE);
 
         let mut approvals =
             read_json_file::<HashMap<String, HashMap<String, ToolApprovalRecord>>>(&approvals_path)
                 .await?;
         let mut pending_turns =
             read_json_file::<HashMap<String, PendingTurnResume>>(&pending_path).await?;
-        let workflows = read_json_file::<HashMap<String, AgentWorkflowState>>(&workflows_path).await?;
+        let workflows =
+            read_json_file::<HashMap<String, AgentWorkflowState>>(&workflows_path).await?;
+        let session_work_states =
+            read_json_file::<HashMap<String, AgentSessionWorkState>>(&session_work_states_path)
+                .await?;
 
         let approvals_dirty = cleanup_expired_tool_approvals(&mut approvals);
         let pending_dirty = cleanup_expired_pending_turns(&mut pending_turns);
@@ -228,6 +251,10 @@ impl AgentRuntimeState {
         {
             let mut workflow_state = self.workflows.lock().await;
             *workflow_state = workflows;
+        }
+        {
+            let mut session_states = self.session_work_states.lock().await;
+            *session_states = session_work_states;
         }
 
         {
@@ -561,6 +588,60 @@ impl AgentRuntimeState {
         .await;
     }
 
+    pub async fn record_collected_references_from_tool_result(
+        &self,
+        tab_id: &str,
+        local_session_id: Option<&str>,
+        tool_name: &str,
+        content: &Value,
+    ) {
+        if tool_name != "search_literature" {
+            return;
+        }
+        let Some(results) = content.get("results").and_then(Value::as_array) else {
+            return;
+        };
+        if results.is_empty() {
+            return;
+        }
+
+        let added_at = now_rfc3339();
+        let parsed = results
+            .iter()
+            .filter_map(|item| parse_collected_reference(item, &added_at))
+            .collect::<Vec<_>>();
+        if parsed.is_empty() {
+            return;
+        }
+
+        self.update_work_state(tab_id, local_session_id, |state| {
+            for candidate in &parsed {
+                if let Some(existing) = state
+                    .collected_references
+                    .iter_mut()
+                    .find(|existing| same_reference(existing, candidate))
+                {
+                    if existing.abstract_text.is_none() && candidate.abstract_text.is_some() {
+                        existing.abstract_text = candidate.abstract_text.clone();
+                    }
+                    if existing.journal.is_none() && candidate.journal.is_some() {
+                        existing.journal = candidate.journal.clone();
+                    }
+                    if existing.year.is_none() && candidate.year.is_some() {
+                        existing.year = candidate.year;
+                    }
+                    continue;
+                }
+                state.collected_references.push(candidate.clone());
+            }
+            if state.collected_references.len() > 200 {
+                let drop_count = state.collected_references.len() - 200;
+                state.collected_references.drain(0..drop_count);
+            }
+        })
+        .await;
+    }
+
     pub async fn mark_pending_state(
         &self,
         tab_id: &str,
@@ -616,6 +697,7 @@ impl AgentRuntimeState {
             let mut session_work_states = self.session_work_states.lock().await;
             session_work_states.insert(local_session_id.to_string(), tab_state);
         }
+        let _ = self.persist_session_work_states().await;
 
         let mut pending_turns = self.pending_turns.lock().await;
         if let Some(pending) = pending_turns.get_mut(tab_id) {
@@ -668,12 +750,9 @@ impl AgentRuntimeState {
             .unwrap_or(false)
     }
 
-    pub async fn bind_workflow_to_session(
-        &self,
-        tab_id: &str,
-        local_session_id: Option<&str>,
-    ) {
-        let Some(local_session_id) = local_session_id.filter(|value| !value.trim().is_empty()) else {
+    pub async fn bind_workflow_to_session(&self, tab_id: &str, local_session_id: Option<&str>) {
+        let Some(local_session_id) = local_session_id.filter(|value| !value.trim().is_empty())
+        else {
             return;
         };
 
@@ -682,7 +761,8 @@ impl AgentRuntimeState {
             let mut workflows = self.workflows.lock().await;
             for workflow in workflows.values_mut() {
                 let matches_tab = workflow.tab_id == tab_id;
-                let matches_session = workflow.local_session_id.as_deref() == Some(local_session_id);
+                let matches_session =
+                    workflow.local_session_id.as_deref() == Some(local_session_id);
                 if matches_tab || matches_session {
                     workflow.tab_id = tab_id.to_string();
                     workflow.bind_local_session_id(Some(local_session_id));
@@ -770,6 +850,17 @@ impl AgentRuntimeState {
         write_json_file(&path, &workflows).await
     }
 
+    async fn persist_session_work_states(&self) -> Result<(), String> {
+        let Some(path) = self.persistence_file(SESSION_WORK_STATES_FILE).await else {
+            return Ok(());
+        };
+        let session_work_states = {
+            let session_work_states = self.session_work_states.lock().await;
+            session_work_states.clone()
+        };
+        write_json_file(&path, &session_work_states).await
+    }
+
     async fn persistence_file(&self, file_name: &str) -> Option<PathBuf> {
         self.persistence_dir
             .lock()
@@ -798,6 +889,8 @@ impl AgentRuntimeState {
                 .entry(local_session_id.to_string())
                 .or_default();
             updater(state);
+            drop(session_work_states);
+            let _ = self.persist_session_work_states().await;
         }
     }
 
@@ -815,6 +908,88 @@ impl AgentRuntimeState {
         let tab_work_states = self.tab_work_states.lock().await;
         tab_work_states.get(tab_id).cloned().unwrap_or_default()
     }
+}
+
+fn parse_collected_reference(value: &Value, added_at: &str) -> Option<CollectedReference> {
+    let title = value
+        .get("title")
+        .and_then(Value::as_str)?
+        .trim()
+        .to_string();
+    if title.is_empty() {
+        return None;
+    }
+
+    let doi = value
+        .get("doi")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string);
+    let pmid = value
+        .get("pmid")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string);
+    let journal = value
+        .get("journal")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string);
+    let abstract_text = value
+        .get("abstract")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string);
+    let year = value
+        .get("year")
+        .and_then(Value::as_u64)
+        .and_then(|entry| u32::try_from(entry).ok());
+    let authors = value
+        .get("authors")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Some(CollectedReference {
+        doi,
+        pmid,
+        title,
+        authors,
+        year,
+        journal,
+        abstract_text,
+        user_notes: None,
+        relevance_tag: None,
+        added_at: added_at.to_string(),
+    })
+}
+
+fn same_reference(left: &CollectedReference, right: &CollectedReference) -> bool {
+    if let (Some(left_doi), Some(right_doi)) = (left.doi.as_deref(), right.doi.as_deref()) {
+        if left_doi.eq_ignore_ascii_case(right_doi) {
+            return true;
+        }
+    }
+    if let (Some(left_pmid), Some(right_pmid)) = (left.pmid.as_deref(), right.pmid.as_deref()) {
+        if left_pmid == right_pmid {
+            return true;
+        }
+    }
+    let same_title = left.title.eq_ignore_ascii_case(&right.title);
+    let same_year = left.year == right.year;
+    same_title && (same_year || left.year.is_none() || right.year.is_none())
 }
 
 fn workflow_matches(
@@ -976,6 +1151,7 @@ fn truncate_preview(text: &str, max_chars: usize) -> String {
 mod tests {
     use super::{AgentRuntimeState, AgentSessionRecord, PendingTurnResume};
     use crate::agent::workflows::AgentWorkflowState;
+    use serde_json::json;
 
     #[tokio::test]
     async fn session_summary_includes_working_memory_fields() {
@@ -1064,6 +1240,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn literature_search_results_are_collected_into_session_memory() {
+        let state = AgentRuntimeState::default();
+        state
+            .record_collected_references_from_tool_result(
+                "tab-a",
+                Some("session-a"),
+                "search_literature",
+                &json!({
+                    "results": [
+                        {
+                            "title": "Hydrophobic Surface Engineering for Biomedical Implants",
+                            "doi": "10.1000/example-doi",
+                            "pmid": "12345678",
+                            "year": 2024,
+                            "journal": "Materials Advances",
+                            "abstract": "Study on contact-angle-guided hydrophobic coatings.",
+                            "authors": ["A. Author", "B. Author"]
+                        }
+                    ]
+                }),
+            )
+            .await;
+
+        let work_state = state
+            .work_state_for_prompt("tab-a", Some("session-a"))
+            .await;
+        assert_eq!(work_state.collected_references.len(), 1);
+        let first = &work_state.collected_references[0];
+        assert_eq!(first.pmid.as_deref(), Some("12345678"));
+        assert_eq!(first.doi.as_deref(), Some("10.1000/example-doi"));
+    }
+
+    #[tokio::test]
     async fn pending_turn_round_trips_through_runtime_state() {
         let state = AgentRuntimeState::default();
         state
@@ -1091,8 +1300,7 @@ mod tests {
     #[tokio::test]
     async fn workflow_state_round_trips_through_runtime_state() {
         let state = AgentRuntimeState::default();
-        let mut workflow =
-            AgentWorkflowState::new_paper_drafting("tab-a", "/tmp/project-a", None);
+        let mut workflow = AgentWorkflowState::new_paper_drafting("tab-a", "/tmp/project-a", None);
         workflow.mark_stage_completed("Outline is done.");
         let workflow_id = workflow.workflow_id.clone();
 

@@ -1131,6 +1131,14 @@ async fn handle_tool_result(
             result.is_error,
         )
         .await;
+    runtime_state
+        .record_collected_references_from_tool_result(
+            &request.tab_id,
+            request.local_session_id.as_deref(),
+            &result.tool_name,
+            &result.content,
+        )
+        .await;
 
     emit_tool_result(
         window,

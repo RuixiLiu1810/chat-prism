@@ -81,6 +81,55 @@ const BIOMEDICAL_DOMAIN_INSTRUCTIONS: &str = concat!(
     "- Flag possible ethics/reporting gaps when relevant (IRB/ethics approval, conflicts, CONSORT/PRISMA/STROBE-style reporting expectations).\n",
 );
 
+fn prompt_contains_cjk(prompt: &str) -> bool {
+    prompt
+        .chars()
+        .any(|ch| ('\u{4E00}'..='\u{9FFF}').contains(&ch))
+}
+
+fn provider_adaptive_instruction_block(
+    provider: &str,
+    request: &AgentTurnDescriptor,
+    profile: &AgentTurnProfile,
+) -> Option<String> {
+    match provider {
+        "openai" => Some(
+            "[Provider operating note]\n\
+            - Keep tool arguments strict JSON with all required fields.\n\
+            - For analysis/review answers, use compact structure (short heading + bullets) when it improves clarity.\n"
+                .to_string(),
+        ),
+        "deepseek" => Some(
+            "[Provider operating note]\n\
+            - Think step-by-step before choosing tools.\n\
+            - Before finalizing, cross-check conclusions against extracted evidence and call out uncertainty explicitly.\n"
+                .to_string(),
+        ),
+        "minimax" => {
+            let mut block = String::from(
+                "[Provider operating note]\n\
+                - Maintain strong reasoning depth. For analysis/literature/peer-review tasks, do not stop at a one-line conclusion; provide at least 3 evidence-backed points before final takeaway.\n\
+                - Validate tool outputs against the user question before producing final claims.\n",
+            );
+            if matches!(
+                profile.task_kind,
+                AgentTaskKind::Analysis | AgentTaskKind::LiteratureReview | AgentTaskKind::PeerReview
+            ) {
+                block.push_str(
+                    "- For complex judgments, include: evidence summary, limits/uncertainty, and actionable next step.\n",
+                );
+            }
+            if prompt_contains_cjk(&request.prompt) {
+                block.push_str(
+                    "- 用户使用中文时优先中文输出；保留专业术语原文并给出必要解释。\n",
+                );
+            }
+            Some(block)
+        }
+        _ => None,
+    }
+}
+
 fn prompt_lower(prompt: &str) -> String {
     prompt.to_lowercase()
 }
@@ -447,6 +496,15 @@ pub fn build_agent_instructions_with_work_state(
                 instructions.push('\n');
             }
         }
+
+        if let Some(provider_block) =
+            provider_adaptive_instruction_block(&runtime.provider, request, &profile)
+        {
+            instructions.push_str(&provider_block);
+            if !provider_block.ends_with('\n') {
+                instructions.push('\n');
+            }
+        }
     }
 
     match profile.task_kind {
@@ -624,6 +682,34 @@ fn selective_session_recall(
             push_unique_recall_line(
                 &mut lines,
                 Some(format!("Recent tool activity: {}", activity)),
+            );
+        }
+    }
+
+    if matches!(
+        profile.task_kind,
+        AgentTaskKind::LiteratureReview | AgentTaskKind::PaperDrafting | AgentTaskKind::PeerReview
+    ) && !work_state.collected_references.is_empty()
+    {
+        push_unique_recall_line(
+            &mut lines,
+            Some(format!(
+                "Reference memory: {} collected references available in this session.",
+                work_state.collected_references.len()
+            )),
+        );
+        let recent_titles = work_state
+            .collected_references
+            .iter()
+            .rev()
+            .take(2)
+            .map(|entry| entry.title.trim())
+            .filter(|title| !title.is_empty())
+            .collect::<Vec<_>>();
+        if !recent_titles.is_empty() {
+            push_unique_recall_line(
+                &mut lines,
+                Some(format!("Recent references: {}", recent_titles.join("; "))),
             );
         }
     }
@@ -1056,8 +1142,8 @@ mod prompt_tests {
         tool_choice_for_task,
     };
     use crate::agent::provider::{
-        AgentResponseMode, AgentSelectionScope, AgentTaskKind, AgentTurnDescriptor,
-        AgentTurnProfile,
+        AgentResponseMode, AgentSamplingProfile, AgentSelectionScope, AgentTaskKind,
+        AgentTurnDescriptor, AgentTurnProfile,
     };
     use crate::agent::session::AgentSessionWorkState;
     use crate::settings::{
@@ -1253,6 +1339,33 @@ mod prompt_tests {
     }
 
     #[test]
+    fn minimax_provider_instructions_enforce_deeper_analysis() {
+        let request = make_request(
+            "Please compare the evidence quality across these papers.",
+            Some(AgentTurnProfile {
+                task_kind: AgentTaskKind::LiteratureReview,
+                sampling_profile: AgentSamplingProfile::AnalysisDeep,
+                ..AgentTurnProfile::default()
+            }),
+        );
+        let runtime = make_runtime("general", None);
+        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime));
+        assert!(instructions.contains("[Provider operating note]"));
+        assert!(instructions.contains("Maintain strong reasoning depth"));
+        assert!(instructions.contains("at least 3 evidence-backed points"));
+    }
+
+    #[test]
+    fn openai_provider_instructions_include_structured_output_hint() {
+        let request = make_request("Summarize key findings.", None);
+        let mut runtime = make_runtime("general", None);
+        runtime.provider = "openai".to_string();
+        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime));
+        assert!(instructions.contains("[Provider operating note]"));
+        assert!(instructions.contains("strict JSON"));
+    }
+
+    #[test]
     fn binary_attachment_analysis_prefers_prompt_evidence_over_extra_tool_turns() {
         let request = make_request(
             "[Attached resource: @paper.pdf (pdf)]\n[Resource path: attachments/paper.pdf]\n[Attached excerpt:\nhydrophobic surface treatment\n]\n[Relevant resource evidence:\n- Document: attachments/paper.pdf (pdf)\n  - Page 4: hydrophobic surface treatment was evaluated by contact angle measurements.\n]\n\n哪篇文章提到疏水性相关实验",
@@ -1315,6 +1428,7 @@ mod prompt_tests {
             pending_state: None,
             pending_tool_name: None,
             pending_target: None,
+            collected_references: Vec::new(),
         };
 
         let instructions =
@@ -1346,6 +1460,7 @@ mod prompt_tests {
             pending_state: Some("review_ready".to_string()),
             pending_tool_name: Some("patch_file".to_string()),
             pending_target: Some("main.tex".to_string()),
+            collected_references: Vec::new(),
         };
 
         let instructions =
