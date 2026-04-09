@@ -19,7 +19,7 @@ use super::tools::{
 };
 use super::turn_engine::{
     emit_error, emit_status, emit_text_delta, execute_tool_calls, should_surface_assistant_text,
-    tool_result_feedback_for_model, TurnBudget,
+    tool_result_feedback_for_model, tool_result_has_invalid_arguments_error, TurnBudget,
 };
 use super::{
     agent_instructions_for_request, max_rounds_for_task, resolve_turn_profile, tool_choice_for_task,
@@ -27,6 +27,8 @@ use super::{
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const AGENT_CANCELLED_MESSAGE: &str = "Agent run cancelled by user.";
+const TOOL_ARGUMENTS_RETRY_HINT: &str = "[Tool argument recovery rule]\n\
+The previous tool call arguments were invalid JSON. Retry by emitting tool arguments as a strict JSON object only (no markdown fences, no prose, no trailing commentary). Include every required field.";
 
 fn sampling_profile_params(
     profile: Option<&AgentSamplingProfile>,
@@ -581,7 +583,7 @@ pub async fn run_turn_loop(
     let resolved_profile = resolve_turn_profile(request);
     let runtime_settings =
         settings::load_agent_runtime(&window.app_handle(), Some(&request.project_path))?;
-    let instructions =
+    let mut instructions =
         agent_instructions_for_request(runtime_state, request, Some(&runtime_settings)).await;
     let turn_started_at = Instant::now();
     let mut doc_tool_rounds = 0u32;
@@ -663,6 +665,7 @@ pub async fn run_turn_loop(
         .await;
 
         let mut tool_outputs = Vec::new();
+        let mut invalid_tool_arguments_detected = false;
         for executed in &executed_calls.executed {
             let result = executed.result.clone();
             if result.content.get("error").and_then(Value::as_str) == Some(AGENT_CANCELLED_MESSAGE)
@@ -689,6 +692,9 @@ pub async fn run_turn_loop(
                 if document_fallback_used(&result) {
                     fallback_count = fallback_count.saturating_add(1);
                 }
+            }
+            if tool_result_has_invalid_arguments_error(&result) {
+                invalid_tool_arguments_detected = true;
             }
             let feedback = tool_result_feedback_for_model(&result);
             budget.record_output_text(&feedback)?;
@@ -727,6 +733,19 @@ pub async fn run_turn_loop(
         }
 
         previous_response_id = outcome.response_id.or(previous_response_id);
+        if invalid_tool_arguments_detected
+            && !instructions.contains("[Tool argument recovery rule]")
+        {
+            instructions.push('\n');
+            instructions.push_str(TOOL_ARGUMENTS_RETRY_HINT);
+            instructions.push('\n');
+            emit_status(
+                Some(window),
+                &request.tab_id,
+                "tool_retry_hint",
+                "Tool arguments were invalid. Retrying with strict JSON argument guidance.",
+            );
+        }
         next_input = Value::Array(tool_outputs);
         emit_status(
             Some(window),

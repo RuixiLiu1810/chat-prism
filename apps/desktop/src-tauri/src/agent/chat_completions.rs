@@ -19,7 +19,7 @@ use super::tools::{
 };
 use super::turn_engine::{
     emit_error, emit_status, emit_text_delta, execute_tool_calls, should_surface_assistant_text,
-    tool_result_feedback_for_model, TurnBudget,
+    tool_result_feedback_for_model, tool_result_has_invalid_arguments_error, TurnBudget,
 };
 use super::{
     agent_instructions_for_request, max_rounds_for_task, resolve_turn_profile, tool_choice_for_task,
@@ -51,6 +51,21 @@ pub fn provider_display_name(provider: &str) -> &'static str {
         "minimax" => "MiniMax Chat Completions",
         "deepseek" => "DeepSeek Chat Completions",
         _ => "Chat Completions",
+    }
+}
+
+const TOOL_ARGUMENTS_RETRY_HINT: &str = "[Tool argument recovery rule]\n\
+The previous tool call arguments were invalid JSON. Retry by emitting tool arguments as a strict JSON object only (no markdown fences, no prose, no trailing commentary). Include every required field.";
+
+fn provider_supports_required_tool_choice(provider: &str) -> bool {
+    matches!(provider, "minimax")
+}
+
+fn effective_tool_choice_for_provider<'a>(provider: &str, requested: &'a str) -> (&'a str, bool) {
+    if requested == "required" && !provider_supports_required_tool_choice(provider) {
+        ("auto", true)
+    } else {
+        (requested, false)
     }
 }
 
@@ -558,6 +573,9 @@ async fn stream_chat_completions_response_once(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(config.model);
     let resolved_profile = resolve_turn_profile(request);
+    let requested_tool_choice = tool_choice_for_task(request, &resolved_profile);
+    let (effective_tool_choice, _) =
+        effective_tool_choice_for_provider(&config.provider, requested_tool_choice);
 
     let mut body = json!({
         "model": model,
@@ -567,7 +585,7 @@ async fn stream_chat_completions_response_once(
             .iter()
             .map(|spec| to_chat_completions_tool_schema(spec, &config.provider))
             .collect::<Vec<_>>(),
-        "tool_choice": tool_choice_for_task(request, &resolved_profile),
+        "tool_choice": effective_tool_choice,
     });
     if config.provider == "minimax" {
         body["reasoning_split"] = Value::Bool(true);
@@ -638,8 +656,13 @@ async fn stream_chat_completions_response_once(
                         Err(_) => return Err(AGENT_CANCELLED_MESSAGE.to_string()),
                     }
                 }
-                chunk = response.chunk() => chunk.map_err(|err| format!("MiniMax streaming read failed: {}", err))?
-
+                chunk = response.chunk() => chunk.map_err(|err| {
+                    format!(
+                        "{} streaming read failed: {}",
+                        provider_display_name(provider),
+                        err
+                    )
+                })?
             }
         } else {
             response.chunk().await.map_err(|err| {
@@ -835,7 +858,17 @@ pub async fn run_turn_loop(
         })),
     ];
     let resolved_profile = resolve_turn_profile(request);
-    let instructions = agent_instructions_for_request(runtime_state, request, Some(&runtime)).await;
+    let mut instructions =
+        agent_instructions_for_request(runtime_state, request, Some(&runtime)).await;
+    let requested_tool_choice = tool_choice_for_task(request, &resolved_profile);
+    let (_, downgraded_tool_choice) =
+        effective_tool_choice_for_provider(&runtime.provider, requested_tool_choice);
+    if downgraded_tool_choice {
+        instructions.push_str(
+            "\n[Tool-calling fallback]\n\
+            This provider may ignore tool_choice='required'. You MUST call at least one appropriate tool before finalizing the answer for this turn.\n",
+        );
+    }
     let mut next_messages = transcript_to_chat_messages(&instructions, request, history);
     let turn_started_at = Instant::now();
     let mut doc_tool_rounds = 0u32;
@@ -905,6 +938,7 @@ pub async fn run_turn_loop(
         }
 
         let mut tool_results_messages = vec![raw_assistant];
+        let mut invalid_tool_arguments_detected = false;
         let executed_calls = execute_tool_calls(
             Some(window),
             runtime_state,
@@ -939,6 +973,9 @@ pub async fn run_turn_loop(
                 if document_fallback_used(&result) {
                     fallback_count = fallback_count.saturating_add(1);
                 }
+            }
+            if tool_result_has_invalid_arguments_error(&result) {
+                invalid_tool_arguments_detected = true;
             }
             let feedback = tool_result_feedback_for_model(&result);
             budget.record_output_text(&feedback)?;
@@ -982,6 +1019,18 @@ pub async fn run_turn_loop(
         }
 
         next_messages.extend(tool_results_messages);
+        if invalid_tool_arguments_detected {
+            next_messages.push(json!({
+                "role": "system",
+                "content": TOOL_ARGUMENTS_RETRY_HINT,
+            }));
+            emit_status(
+                Some(window),
+                &request.tab_id,
+                "tool_retry_hint",
+                "Tool arguments were invalid. Retrying with strict JSON argument guidance.",
+            );
+        }
         emit_status(
             Some(window),
             &request.tab_id,
@@ -1208,8 +1257,17 @@ async fn run_turn_loop_silent(
     ];
     let resolved_profile = resolve_turn_profile(request);
     runtime_state.ensure_storage(app).await?;
-    let instructions =
+    let mut instructions =
         agent_instructions_for_request(&runtime_state, request, Some(&runtime)).await;
+    let requested_tool_choice = tool_choice_for_task(request, &resolved_profile);
+    let (_, downgraded_tool_choice) =
+        effective_tool_choice_for_provider(&runtime.provider, requested_tool_choice);
+    if downgraded_tool_choice {
+        instructions.push_str(
+            "\n[Tool-calling fallback]\n\
+            This provider may ignore tool_choice='required'. You MUST call at least one appropriate tool before finalizing the answer for this turn.\n",
+        );
+    }
     let mut next_messages = transcript_to_chat_messages(&instructions, request, history);
     let mut budget = TurnBudget::new(
         max_rounds_for_task(&resolved_profile),
@@ -1249,6 +1307,7 @@ async fn run_turn_loop_silent(
         }
 
         let mut tool_results_messages = vec![raw_assistant];
+        let mut invalid_tool_arguments_detected = false;
         let executed_calls =
             execute_tool_calls(None, &runtime_state, request, outcome.tool_calls, None).await;
         for executed in &executed_calls.executed {
@@ -1256,6 +1315,9 @@ async fn run_turn_loop_silent(
             if result.content.get("error").and_then(Value::as_str) == Some(AGENT_CANCELLED_MESSAGE)
             {
                 return Err(AGENT_CANCELLED_MESSAGE.to_string());
+            }
+            if tool_result_has_invalid_arguments_error(&result) {
+                invalid_tool_arguments_detected = true;
             }
             let feedback = tool_result_feedback_for_model(&result);
             budget.record_output_text(&feedback)?;
@@ -1286,6 +1348,12 @@ async fn run_turn_loop_silent(
         }
 
         next_messages.extend(tool_results_messages);
+        if invalid_tool_arguments_detected {
+            next_messages.push(json!({
+                "role": "system",
+                "content": TOOL_ARGUMENTS_RETRY_HINT,
+            }));
+        }
     }
 
     Err(format!(
@@ -1400,8 +1468,8 @@ pub async fn cancel_response(app: &tauri::AppHandle, provider: &str) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        merge_stream_fragment, provider_display_name, provider_supports_transport,
-        transcript_to_chat_messages,
+        effective_tool_choice_for_provider, merge_stream_fragment, provider_display_name,
+        provider_supports_transport, transcript_to_chat_messages,
     };
     use crate::agent::build_agent_instructions;
     use crate::agent::provider::AgentTurnDescriptor;
@@ -1502,6 +1570,18 @@ mod tests {
             provider_display_name("deepseek"),
             "DeepSeek Chat Completions"
         );
+    }
+
+    #[test]
+    fn deepseek_downgrades_required_tool_choice_to_auto() {
+        let (choice, downgraded) = effective_tool_choice_for_provider("deepseek", "required");
+        assert_eq!(choice, "auto");
+        assert!(downgraded);
+
+        let (choice_minimax, downgraded_minimax) =
+            effective_tool_choice_for_provider("minimax", "required");
+        assert_eq!(choice_minimax, "required");
+        assert!(!downgraded_minimax);
     }
 
     #[test]

@@ -557,6 +557,18 @@ pub fn tool_result_feedback_for_model(result: &AgentToolResult) -> String {
     }
 }
 
+pub fn tool_result_has_invalid_arguments_error(result: &AgentToolResult) -> bool {
+    if !result.is_error {
+        return false;
+    }
+    result
+        .content
+        .get("error")
+        .and_then(Value::as_str)
+        .map(|message| message.contains("Invalid tool arguments JSON"))
+        .unwrap_or(false)
+}
+
 pub fn tool_result_status(tool_name: &str, result_content: &Value) -> (&'static str, String) {
     let synthetic = AgentToolResult {
         tool_name: tool_name.to_string(),

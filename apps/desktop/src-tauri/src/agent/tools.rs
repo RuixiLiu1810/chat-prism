@@ -876,7 +876,7 @@ pub async fn execute_tool_call(
         );
     }
 
-    let parsed_args = match serde_json::from_str::<Value>(&call.arguments) {
+    let parsed_args = match parse_tool_arguments(&call.arguments) {
         Ok(value) => value,
         Err(err) => {
             return error_result(
@@ -1001,6 +1001,81 @@ pub async fn execute_tool_call(
             format!("Unknown local tool: {}", other),
         ),
     }
+}
+
+fn parse_tool_arguments(raw: &str) -> Result<Value, serde_json::Error> {
+    if let Ok(value) = serde_json::from_str::<Value>(raw) {
+        match value {
+            Value::Object(_) | Value::Array(_) => return Ok(value),
+            Value::String(encoded) => {
+                if let Ok(parsed) = serde_json::from_str::<Value>(&encoded) {
+                    if matches!(parsed, Value::Object(_) | Value::Array(_)) {
+                        return Ok(parsed);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Ok(encoded) = serde_json::from_str::<String>(raw) {
+        if let Ok(value) = serde_json::from_str::<Value>(&encoded) {
+            return Ok(value);
+        }
+    }
+
+    if let Some(candidate) = extract_first_json_block(raw) {
+        if let Ok(value) = serde_json::from_str::<Value>(candidate) {
+            return Ok(value);
+        }
+    }
+
+    serde_json::from_str::<Value>(raw)
+}
+
+fn extract_first_json_block(raw: &str) -> Option<&str> {
+    let start = raw.find('{').or_else(|| raw.find('['))?;
+    let bytes = raw.as_bytes();
+    let opener = bytes.get(start).copied()?;
+    let closer = if opener == b'{' { b'}' } else { b']' };
+
+    let mut depth: i32 = 0;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (idx, byte) in bytes.iter().enumerate().skip(start) {
+        if in_string {
+            if escape {
+                escape = false;
+                continue;
+            }
+            if *byte == b'\\' {
+                escape = true;
+                continue;
+            }
+            if *byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if *byte == b'"' {
+            in_string = true;
+            continue;
+        }
+        if *byte == opener {
+            depth += 1;
+            continue;
+        }
+        if *byte == closer {
+            depth -= 1;
+            if depth == 0 {
+                return raw.get(start..=idx);
+            }
+        }
+    }
+
+    None
 }
 
 fn error_result(tool_name: &str, call_id: &str, message: String) -> AgentToolResult {
@@ -1870,9 +1945,9 @@ mod tests {
         build_default_tool_specs, default_tool_specs, ensure_relative_path,
         execute_apply_text_patch, execute_read_document_excerpt, execute_read_file,
         execute_replace_selected_text, line_col_to_byte_offset, parse_selection_anchor,
-        replace_by_anchor, replace_unique_exact, replace_unique_with_trimmed_fallback,
-        to_chat_completions_tool_schema, to_openai_tool_schema, tool_contract, truncate_file_bytes,
-        AgentToolSpec, MAX_FILE_BYTES,
+        parse_tool_arguments, replace_by_anchor, replace_unique_exact,
+        replace_unique_with_trimmed_fallback, to_chat_completions_tool_schema,
+        to_openai_tool_schema, tool_contract, truncate_file_bytes, AgentToolSpec, MAX_FILE_BYTES,
     };
     use crate::agent::document_artifacts::artifact_path_for;
     use crate::agent::session::AgentRuntimeState;
@@ -1985,6 +2060,25 @@ mod tests {
         assert!(minimax["function"]["parameters"]["properties"]["payload"]
             .get("additionalProperties")
             .is_none());
+    }
+
+    #[test]
+    fn parse_tool_arguments_recovers_json_wrapped_string() {
+        let parsed =
+            parse_tool_arguments("\"{\\\"path\\\":\\\"main.tex\\\",\\\"query\\\":\\\"intro\\\"}\"")
+                .expect("wrapped JSON should parse");
+        assert_eq!(parsed["path"], "main.tex");
+        assert_eq!(parsed["query"], "intro");
+    }
+
+    #[test]
+    fn parse_tool_arguments_recovers_json_from_mixed_text() {
+        let parsed = parse_tool_arguments(
+            "```json\n{\"path\":\"main.tex\",\"expected_old_text\":\"a\",\"new_text\":\"b\"}\n```",
+        )
+        .expect("mixed text JSON should parse");
+        assert_eq!(parsed["path"], "main.tex");
+        assert_eq!(parsed["new_text"], "b");
     }
 
     #[test]
