@@ -30,6 +30,11 @@ interface AgentSessionInfo {
   lastToolActivity?: string | null;
   pendingState?: string | null;
   pendingTarget?: string | null;
+  workflowType?: string | null;
+  workflowStage?: string | null;
+  collectedReferenceCount?: number | null;
+  reviewFindingCount?: number | null;
+  hasRevisionTracker?: boolean;
 }
 
 interface ClaudeSessionInfo {
@@ -89,6 +94,11 @@ export function SessionSelector() {
             lastToolActivity: null,
             pendingState: null,
             pendingTarget: null,
+            workflowType: null,
+            workflowStage: null,
+            collectedReferenceCount: null,
+            reviewFindingCount: null,
+            hasRevisionTracker: false,
           })),
         );
       } else {
@@ -133,6 +143,11 @@ export function SessionSelector() {
         lastToolActivity: session.lastToolActivity ?? null,
         pendingState: session.pendingState ?? null,
         pendingTarget: session.pendingTarget ?? null,
+        workflowType: session.workflowType ?? null,
+        workflowStage: session.workflowStage ?? null,
+        collectedReferenceCount: session.collectedReferenceCount ?? null,
+        reviewFindingCount: session.reviewFindingCount ?? null,
+        hasRevisionTracker: session.hasRevisionTracker ?? false,
       });
     },
     [isStreaming, sessionId, resumeSession],

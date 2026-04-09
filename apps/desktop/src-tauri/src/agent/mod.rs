@@ -23,6 +23,7 @@ pub use provider::{
 };
 pub use session::{
     AgentRuntimeState, AgentSessionRecord, AgentSessionSummary, AgentSessionWorkState,
+    CollectedReference,
 };
 use turn_engine::{emit_tool_resumed, emit_turn_resumed};
 use turn_engine::{
@@ -686,6 +687,22 @@ fn selective_session_recall(
         }
     }
 
+    if let Some(workflow_type) = work_state.academic_workflow.workflow_type.as_deref() {
+        let workflow_stage = work_state
+            .academic_workflow
+            .current_step
+            .as_deref()
+            .map(|value| format!(" at stage {}", value))
+            .unwrap_or_default();
+        push_unique_recall_line(
+            &mut lines,
+            Some(format!(
+                "Workflow context: {}{}",
+                workflow_type, workflow_stage
+            )),
+        );
+    }
+
     if matches!(
         profile.task_kind,
         AgentTaskKind::LiteratureReview | AgentTaskKind::PaperDrafting | AgentTaskKind::PeerReview
@@ -711,6 +728,29 @@ fn selective_session_recall(
                 &mut lines,
                 Some(format!("Recent references: {}", recent_titles.join("; "))),
             );
+        }
+    }
+
+    if matches!(
+        profile.task_kind,
+        AgentTaskKind::PaperDrafting | AgentTaskKind::PeerReview
+    ) {
+        if !work_state.academic_workflow.review_findings.is_empty() {
+            push_unique_recall_line(
+                &mut lines,
+                Some(format!(
+                    "Review memory: {} findings captured for this session.",
+                    work_state.academic_workflow.review_findings.len()
+                )),
+            );
+        }
+        if let Some(summary) = work_state
+            .academic_workflow
+            .revision_tracker
+            .as_ref()
+            .and_then(|snapshot| snapshot.summary.as_deref())
+        {
+            push_unique_recall_line(&mut lines, Some(format!("Revision tracker: {}", summary)));
         }
     }
 
@@ -1429,6 +1469,7 @@ mod prompt_tests {
             pending_tool_name: None,
             pending_target: None,
             collected_references: Vec::new(),
+            academic_workflow: Default::default(),
         };
 
         let instructions =
@@ -1461,6 +1502,7 @@ mod prompt_tests {
             pending_tool_name: Some("patch_file".to_string()),
             pending_target: Some("main.tex".to_string()),
             collected_references: Vec::new(),
+            academic_workflow: Default::default(),
         };
 
         let instructions =
@@ -2217,6 +2259,59 @@ pub async fn agent_load_session_history(
     } else {
         Err(format!("Unknown local agent session: {}", local_session_id))
     }
+}
+
+#[tauri::command]
+pub async fn agent_get_collected_references(
+    app: tauri::AppHandle,
+    state: State<'_, AgentRuntimeState>,
+    tab_id: String,
+    local_session_id: Option<String>,
+) -> Result<Vec<CollectedReference>, String> {
+    state.ensure_storage(&app).await?;
+    Ok(state
+        .collected_references_for(&tab_id, local_session_id.as_deref())
+        .await)
+}
+
+#[tauri::command]
+pub async fn agent_update_collected_reference(
+    app: tauri::AppHandle,
+    state: State<'_, AgentRuntimeState>,
+    tab_id: String,
+    local_session_id: Option<String>,
+    doi: Option<String>,
+    pmid: Option<String>,
+    title: Option<String>,
+    user_notes: Option<String>,
+    relevance_tag: Option<String>,
+) -> Result<(), String> {
+    state.ensure_storage(&app).await?;
+    state
+        .update_collected_reference(
+            &tab_id,
+            local_session_id.as_deref(),
+            doi,
+            pmid,
+            title,
+            user_notes,
+            relevance_tag,
+        )
+        .await
+}
+
+#[tauri::command]
+pub async fn agent_clear_collected_references(
+    app: tauri::AppHandle,
+    state: State<'_, AgentRuntimeState>,
+    tab_id: String,
+    local_session_id: Option<String>,
+) -> Result<(), String> {
+    state.ensure_storage(&app).await?;
+    state
+        .clear_collected_references(&tab_id, local_session_id.as_deref())
+        .await;
+    Ok(())
 }
 
 #[tauri::command]

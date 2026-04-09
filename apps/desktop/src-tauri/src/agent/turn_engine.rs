@@ -1151,6 +1151,14 @@ async fn handle_tool_result(
             &result.content,
         )
         .await;
+    runtime_state
+        .record_academic_artifacts_from_tool_result(
+            &request.tab_id,
+            request.local_session_id.as_deref(),
+            &result.tool_name,
+            &result.content,
+        )
+        .await;
 
     emit_tool_result(
         window,

@@ -170,6 +170,11 @@ export interface SessionIdentity {
   lastToolActivity: string | null;
   pendingState: string | null;
   pendingTarget: string | null;
+  workflowType: string | null;
+  workflowStage: string | null;
+  collectedReferenceCount: number | null;
+  reviewFindingCount: number | null;
+  hasRevisionTracker: boolean;
 }
 
 export interface ResumableSessionMeta {
@@ -185,6 +190,11 @@ export interface ResumableSessionMeta {
   lastToolActivity?: string | null;
   pendingState?: string | null;
   pendingTarget?: string | null;
+  workflowType?: string | null;
+  workflowStage?: string | null;
+  collectedReferenceCount?: number | null;
+  reviewFindingCount?: number | null;
+  hasRevisionTracker?: boolean;
 }
 
 export function buildSessionIdentity(
@@ -204,6 +214,11 @@ export function buildSessionIdentity(
     lastToolActivity: metadata?.lastToolActivity ?? null,
     pendingState: metadata?.pendingState ?? null,
     pendingTarget: metadata?.pendingTarget ?? null,
+    workflowType: metadata?.workflowType ?? null,
+    workflowStage: metadata?.workflowStage ?? null,
+    collectedReferenceCount: metadata?.collectedReferenceCount ?? null,
+    reviewFindingCount: metadata?.reviewFindingCount ?? null,
+    hasRevisionTracker: metadata?.hasRevisionTracker ?? false,
   };
 }
 

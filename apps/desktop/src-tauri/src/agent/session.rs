@@ -86,6 +86,11 @@ pub struct AgentSessionSummary {
     pub last_tool_activity: Option<String>,
     pub pending_state: Option<String>,
     pub pending_target: Option<String>,
+    pub workflow_type: Option<String>,
+    pub workflow_stage: Option<String>,
+    pub collected_reference_count: usize,
+    pub review_finding_count: usize,
+    pub has_revision_tracker: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -129,6 +134,8 @@ pub struct AgentSessionWorkState {
     pub pending_target: Option<String>,
     #[serde(default)]
     pub collected_references: Vec<CollectedReference>,
+    #[serde(default)]
+    pub academic_workflow: AcademicWorkflowSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +151,48 @@ pub struct CollectedReference {
     pub user_notes: Option<String>,
     pub relevance_tag: Option<String>,
     pub added_at: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AcademicWorkflowSnapshot {
+    pub workflow_type: Option<String>,
+    pub current_step: Option<String>,
+    pub manuscript_outline: Option<ManuscriptOutlineSnapshot>,
+    #[serde(default)]
+    pub review_findings: Vec<StoredReviewFinding>,
+    pub revision_tracker: Option<RevisionTrackerSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManuscriptOutlineSnapshot {
+    pub sections: Vec<String>,
+    pub source_tool: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredReviewFinding {
+    pub severity: Option<String>,
+    pub dimension: Option<String>,
+    pub message: String,
+    pub suggestion: Option<String>,
+    pub source_tool: String,
+    pub captured_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RevisionTrackerSnapshot {
+    pub changed_line_count: Option<u32>,
+    pub first_changed_line: Option<u32>,
+    pub old_word_count: Option<u32>,
+    pub new_word_count: Option<u32>,
+    pub delta_word_count: Option<i32>,
+    pub summary: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -315,6 +364,11 @@ impl AgentRuntimeState {
                 last_tool_activity: work_state.last_tool_activity,
                 pending_state: work_state.pending_state,
                 pending_target: work_state.pending_target,
+                workflow_type: work_state.academic_workflow.workflow_type.clone(),
+                workflow_stage: work_state.academic_workflow.current_step.clone(),
+                collected_reference_count: work_state.collected_references.len(),
+                review_finding_count: work_state.academic_workflow.review_findings.len(),
+                has_revision_tracker: work_state.academic_workflow.revision_tracker.is_some(),
             });
         }
 
@@ -360,6 +414,11 @@ impl AgentRuntimeState {
             last_tool_activity: work_state.last_tool_activity,
             pending_state: work_state.pending_state,
             pending_target: work_state.pending_target,
+            workflow_type: work_state.academic_workflow.workflow_type.clone(),
+            workflow_stage: work_state.academic_workflow.current_step.clone(),
+            collected_reference_count: work_state.collected_references.len(),
+            review_finding_count: work_state.academic_workflow.review_findings.len(),
+            has_revision_tracker: work_state.academic_workflow.revision_tracker.is_some(),
         })
     }
 
@@ -642,6 +701,143 @@ impl AgentRuntimeState {
         .await;
     }
 
+    pub async fn sync_workflow_snapshot(
+        &self,
+        tab_id: &str,
+        local_session_id: Option<&str>,
+        workflow_type: Option<&str>,
+        current_step: Option<&str>,
+    ) {
+        self.update_work_state(tab_id, local_session_id, |state| {
+            state.academic_workflow.workflow_type = workflow_type
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            state.academic_workflow.current_step = current_step
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+        })
+        .await;
+    }
+
+    pub async fn record_academic_artifacts_from_tool_result(
+        &self,
+        tab_id: &str,
+        local_session_id: Option<&str>,
+        tool_name: &str,
+        content: &Value,
+    ) {
+        let captured_at = now_rfc3339();
+        self.update_work_state(tab_id, local_session_id, |state| match tool_name {
+            "restructure_outline" => {
+                let sections = extract_outline_sections(content);
+                if sections.is_empty() {
+                    return;
+                }
+                state.academic_workflow.manuscript_outline = Some(ManuscriptOutlineSnapshot {
+                    sections,
+                    source_tool: tool_name.to_string(),
+                    updated_at: captured_at.clone(),
+                });
+            }
+            "review_manuscript" | "check_statistics" | "check_consistency" => {
+                let findings = extract_review_findings(content, tool_name, &captured_at);
+                if findings.is_empty() {
+                    return;
+                }
+                for finding in findings {
+                    if state
+                        .academic_workflow
+                        .review_findings
+                        .iter()
+                        .any(|existing| same_stored_review_finding(existing, &finding))
+                    {
+                        continue;
+                    }
+                    state.academic_workflow.review_findings.push(finding);
+                }
+                if state.academic_workflow.review_findings.len() > 200 {
+                    let drop_count = state.academic_workflow.review_findings.len() - 200;
+                    state.academic_workflow.review_findings.drain(0..drop_count);
+                }
+            }
+            "track_revisions" => {
+                if let Some(snapshot) = extract_revision_tracker(content, &captured_at) {
+                    state.academic_workflow.revision_tracker = Some(snapshot);
+                }
+            }
+            _ => {}
+        })
+        .await;
+    }
+
+    pub async fn collected_references_for(
+        &self,
+        tab_id: &str,
+        local_session_id: Option<&str>,
+    ) -> Vec<CollectedReference> {
+        let state = self.work_state_for_prompt(tab_id, local_session_id).await;
+        state.collected_references
+    }
+
+    pub async fn update_collected_reference(
+        &self,
+        tab_id: &str,
+        local_session_id: Option<&str>,
+        doi: Option<String>,
+        pmid: Option<String>,
+        title: Option<String>,
+        user_notes: Option<String>,
+        relevance_tag: Option<String>,
+    ) -> Result<(), String> {
+        let doi = normalize_reference_id(doi.as_deref());
+        let pmid = normalize_reference_id(pmid.as_deref());
+        let title = title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if doi.is_none() && pmid.is_none() && title.is_none() {
+            return Err(
+                "Provide at least one reference identifier: doi, pmid, or title.".to_string(),
+            );
+        }
+
+        let normalized_notes = user_notes
+            .as_deref()
+            .map(str::trim)
+            .map(|value| value.to_string())
+            .filter(|value| !value.is_empty());
+        let normalized_tag = normalize_relevance_tag(relevance_tag.as_deref())?;
+
+        let mut updated = false;
+        self.update_work_state(tab_id, local_session_id, |state| {
+            let candidate = state.collected_references.iter_mut().find(|entry| {
+                reference_matches_selector(entry, doi.as_deref(), pmid.as_deref(), title.as_deref())
+            });
+            if let Some(entry) = candidate {
+                entry.user_notes = normalized_notes.clone();
+                entry.relevance_tag = normalized_tag.clone();
+                updated = true;
+            }
+        })
+        .await;
+
+        if updated {
+            Ok(())
+        } else {
+            Err("No matching collected reference found for the provided identifier.".to_string())
+        }
+    }
+
+    pub async fn clear_collected_references(&self, tab_id: &str, local_session_id: Option<&str>) {
+        self.update_work_state(tab_id, local_session_id, |state| {
+            state.collected_references.clear();
+        })
+        .await;
+    }
+
     pub async fn mark_pending_state(
         &self,
         tab_id: &str,
@@ -719,12 +915,23 @@ impl AgentRuntimeState {
     }
 
     pub async fn upsert_workflow_state(&self, workflow: AgentWorkflowState) {
+        let workflow_type = workflow.workflow_type.as_str().to_string();
+        let current_stage = workflow.current_stage.clone();
+        let workflow_tab_id = workflow.tab_id.clone();
+        let workflow_session_id = workflow.local_session_id.clone();
         let workflow_id = workflow.workflow_id.clone();
         {
             let mut workflows = self.workflows.lock().await;
             workflows.insert(workflow_id, workflow);
         }
         let _ = self.persist_workflow_states().await;
+        self.sync_workflow_snapshot(
+            &workflow_tab_id,
+            workflow_session_id.as_deref(),
+            Some(&workflow_type),
+            Some(&current_stage),
+        )
+        .await;
     }
 
     pub async fn workflow_state_for(
@@ -796,6 +1003,8 @@ impl AgentRuntimeState {
         }
         if changed {
             let _ = self.persist_workflow_states().await;
+            self.sync_workflow_snapshot(tab_id, local_session_id, None, None)
+                .await;
         }
     }
 
@@ -974,6 +1183,168 @@ fn parse_collected_reference(value: &Value, added_at: &str) -> Option<CollectedR
         relevance_tag: None,
         added_at: added_at.to_string(),
     })
+}
+
+fn extract_outline_sections(content: &Value) -> Vec<String> {
+    let Some(revised_outline) = content.get("revisedOutline").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    revised_outline
+        .iter()
+        .filter_map(|item| item.get("section").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>()
+}
+
+fn extract_review_findings(
+    content: &Value,
+    source_tool: &str,
+    captured_at: &str,
+) -> Vec<StoredReviewFinding> {
+    let Some(findings) = content.get("findings").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    findings
+        .iter()
+        .filter_map(|item| {
+            let message = item
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?
+                .to_string();
+            let severity = item
+                .get("severity")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let dimension = item
+                .get("dimension")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let suggestion = item
+                .get("suggestion")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            Some(StoredReviewFinding {
+                severity,
+                dimension,
+                message,
+                suggestion,
+                source_tool: source_tool.to_string(),
+                captured_at: captured_at.to_string(),
+            })
+        })
+        .collect::<Vec<_>>()
+}
+
+fn same_stored_review_finding(left: &StoredReviewFinding, right: &StoredReviewFinding) -> bool {
+    left.message.eq_ignore_ascii_case(&right.message)
+        && left
+            .dimension
+            .as_deref()
+            .unwrap_or_default()
+            .eq_ignore_ascii_case(right.dimension.as_deref().unwrap_or_default())
+        && left
+            .severity
+            .as_deref()
+            .unwrap_or_default()
+            .eq_ignore_ascii_case(right.severity.as_deref().unwrap_or_default())
+}
+
+fn value_to_u32(value: Option<u64>) -> Option<u32> {
+    value.and_then(|entry| u32::try_from(entry).ok())
+}
+
+fn value_to_i32(value: Option<i64>) -> Option<i32> {
+    value.and_then(|entry| i32::try_from(entry).ok())
+}
+
+fn extract_revision_tracker(content: &Value, captured_at: &str) -> Option<RevisionTrackerSnapshot> {
+    let summary = content
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let changed_line_count = value_to_u32(content.get("changedLineCount").and_then(Value::as_u64));
+    let first_changed_line = value_to_u32(content.get("firstChangedLine").and_then(Value::as_u64));
+    let old_word_count = value_to_u32(content.get("oldWordCount").and_then(Value::as_u64));
+    let new_word_count = value_to_u32(content.get("newWordCount").and_then(Value::as_u64));
+    let delta_word_count = value_to_i32(content.get("deltaWordCount").and_then(Value::as_i64));
+
+    if summary.is_none()
+        && changed_line_count.is_none()
+        && first_changed_line.is_none()
+        && old_word_count.is_none()
+        && new_word_count.is_none()
+        && delta_word_count.is_none()
+    {
+        return None;
+    }
+
+    Some(RevisionTrackerSnapshot {
+        changed_line_count,
+        first_changed_line,
+        old_word_count,
+        new_word_count,
+        delta_word_count,
+        summary,
+        updated_at: captured_at.to_string(),
+    })
+}
+
+fn normalize_reference_id(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+}
+
+fn normalize_relevance_tag(value: Option<&str>) -> Result<Option<String>, String> {
+    let Some(value) = value.map(str::trim).filter(|entry| !entry.is_empty()) else {
+        return Ok(None);
+    };
+    let normalized = value.to_ascii_lowercase();
+    if matches!(normalized.as_str(), "high" | "medium" | "low") {
+        Ok(Some(normalized))
+    } else {
+        Err("relevance_tag must be one of: high, medium, low.".to_string())
+    }
+}
+
+fn reference_matches_selector(
+    entry: &CollectedReference,
+    doi: Option<&str>,
+    pmid: Option<&str>,
+    title: Option<&str>,
+) -> bool {
+    if let Some(doi) = doi {
+        if entry
+            .doi
+            .as_deref()
+            .map(|existing| existing.eq_ignore_ascii_case(doi))
+            .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    if let Some(pmid) = pmid {
+        if entry.pmid.as_deref() == Some(pmid) {
+            return true;
+        }
+    }
+    if let Some(title) = title {
+        return entry.title.eq_ignore_ascii_case(title);
+    }
+    false
 }
 
 fn same_reference(left: &CollectedReference, right: &CollectedReference) -> bool {
@@ -1270,6 +1641,125 @@ mod tests {
         let first = &work_state.collected_references[0];
         assert_eq!(first.pmid.as_deref(), Some("12345678"));
         assert_eq!(first.doi.as_deref(), Some("10.1000/example-doi"));
+    }
+
+    #[tokio::test]
+    async fn workflow_snapshot_syncs_into_session_work_state() {
+        let state = AgentRuntimeState::default();
+        let mut workflow =
+            AgentWorkflowState::new_literature_review("tab-a", "/tmp/project-a", None);
+        workflow.bind_local_session_id(Some("session-a"));
+        workflow.current_stage = "paper_analysis".to_string();
+
+        state.upsert_workflow_state(workflow).await;
+        let work_state = state
+            .work_state_for_prompt("tab-a", Some("session-a"))
+            .await;
+        assert_eq!(
+            work_state.academic_workflow.workflow_type.as_deref(),
+            Some("literature_review")
+        );
+        assert_eq!(
+            work_state.academic_workflow.current_step.as_deref(),
+            Some("paper_analysis")
+        );
+    }
+
+    #[tokio::test]
+    async fn review_and_revision_tool_results_are_persisted_in_work_state() {
+        let state = AgentRuntimeState::default();
+        state
+            .record_academic_artifacts_from_tool_result(
+                "tab-a",
+                Some("session-a"),
+                "review_manuscript",
+                &json!({
+                    "findings": [
+                        {
+                            "severity": "major",
+                            "dimension": "scientific_rigor",
+                            "message": "Objective is not clearly stated.",
+                            "suggestion": "Add an objective paragraph in the introduction."
+                        }
+                    ]
+                }),
+            )
+            .await;
+        state
+            .record_academic_artifacts_from_tool_result(
+                "tab-a",
+                Some("session-a"),
+                "track_revisions",
+                &json!({
+                    "summary": "Tracked revisions: 5 changed lines, word delta 12 (210 -> 222).",
+                    "changedLineCount": 5,
+                    "firstChangedLine": 24,
+                    "oldWordCount": 210,
+                    "newWordCount": 222,
+                    "deltaWordCount": 12
+                }),
+            )
+            .await;
+
+        let work_state = state
+            .work_state_for_prompt("tab-a", Some("session-a"))
+            .await;
+        assert_eq!(work_state.academic_workflow.review_findings.len(), 1);
+        assert_eq!(
+            work_state.academic_workflow.review_findings[0].message,
+            "Objective is not clearly stated."
+        );
+        let tracker = work_state
+            .academic_workflow
+            .revision_tracker
+            .as_ref()
+            .expect("revision tracker should be present");
+        assert_eq!(tracker.changed_line_count, Some(5));
+        assert_eq!(tracker.delta_word_count, Some(12));
+    }
+
+    #[tokio::test]
+    async fn collected_reference_metadata_can_be_updated() {
+        let state = AgentRuntimeState::default();
+        state
+            .record_collected_references_from_tool_result(
+                "tab-a",
+                Some("session-a"),
+                "search_literature",
+                &json!({
+                    "results": [
+                        {
+                            "title": "Hydrophobic Surface Engineering for Biomedical Implants",
+                            "doi": "10.1000/example-doi",
+                            "pmid": "12345678",
+                            "year": 2024
+                        }
+                    ]
+                }),
+            )
+            .await;
+        state
+            .update_collected_reference(
+                "tab-a",
+                Some("session-a"),
+                Some("10.1000/example-doi".to_string()),
+                None,
+                None,
+                Some("Important for introduction related-work paragraph.".to_string()),
+                Some("high".to_string()),
+            )
+            .await
+            .expect("reference metadata should update");
+
+        let refs = state
+            .collected_references_for("tab-a", Some("session-a"))
+            .await;
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].user_notes.as_deref(),
+            Some("Important for introduction related-work paragraph.")
+        );
+        assert_eq!(refs[0].relevance_tag.as_deref(), Some("high"));
     }
 
     #[tokio::test]

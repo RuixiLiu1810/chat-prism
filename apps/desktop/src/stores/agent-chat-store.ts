@@ -260,6 +260,11 @@ interface LocalAgentSessionSummary {
   lastToolActivity?: string | null;
   pendingState?: string | null;
   pendingTarget?: string | null;
+  workflowType?: string | null;
+  workflowStage?: string | null;
+  collectedReferenceCount?: number | null;
+  reviewFindingCount?: number | null;
+  hasRevisionTracker?: boolean;
 }
 
 /**
