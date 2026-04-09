@@ -1,5 +1,6 @@
 mod literature_review;
 mod paper_drafting;
+mod peer_review;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -7,12 +8,14 @@ use uuid::Uuid;
 
 pub use literature_review::LiteratureReviewStage;
 pub use paper_drafting::PaperDraftingStage;
+pub use peer_review::PeerReviewStage;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentWorkflowType {
     PaperDrafting,
     LiteratureReview,
+    PeerReview,
 }
 
 impl AgentWorkflowType {
@@ -20,6 +23,7 @@ impl AgentWorkflowType {
         match self {
             Self::PaperDrafting => "paper_drafting",
             Self::LiteratureReview => "literature_review",
+            Self::PeerReview => "peer_review",
         }
     }
 }
@@ -109,12 +113,32 @@ impl AgentWorkflowState {
         }
     }
 
+    pub fn new_peer_review(tab_id: &str, project_path: &str, model: Option<String>) -> Self {
+        let now = Utc::now().to_rfc3339();
+        Self {
+            workflow_id: Uuid::new_v4().to_string(),
+            workflow_type: AgentWorkflowType::PeerReview,
+            tab_id: tab_id.to_string(),
+            local_session_id: None,
+            project_path: project_path.to_string(),
+            model,
+            current_stage: PeerReviewStage::ScopeAndCriteria.as_str().to_string(),
+            pending_checkpoint: false,
+            stage_history: Vec::new(),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
     pub fn stage_label(&self) -> String {
         match self.workflow_type {
             AgentWorkflowType::PaperDrafting => parse_paper_stage(&self.current_stage)
                 .map(|stage| stage.label().to_string())
                 .unwrap_or_else(|| self.current_stage.clone()),
             AgentWorkflowType::LiteratureReview => parse_literature_stage(&self.current_stage)
+                .map(|stage| stage.label().to_string())
+                .unwrap_or_else(|| self.current_stage.clone()),
+            AgentWorkflowType::PeerReview => parse_peer_review_stage(&self.current_stage)
                 .map(|stage| stage.label().to_string())
                 .unwrap_or_else(|| self.current_stage.clone()),
         }
@@ -126,6 +150,9 @@ impl AgentWorkflowState {
                 .map(|stage| stage.is_terminal())
                 .unwrap_or(false),
             AgentWorkflowType::LiteratureReview => parse_literature_stage(&self.current_stage)
+                .map(|stage| stage.is_terminal())
+                .unwrap_or(false),
+            AgentWorkflowType::PeerReview => parse_peer_review_stage(&self.current_stage)
                 .map(|stage| stage.is_terminal())
                 .unwrap_or(false),
         }
@@ -232,6 +259,9 @@ impl AgentWorkflowState {
             AgentWorkflowType::LiteratureReview => parse_literature_stage(&self.current_stage)
                 .and_then(|stage| stage.next_stage())
                 .map(|stage| stage.as_str().to_string()),
+            AgentWorkflowType::PeerReview => parse_peer_review_stage(&self.current_stage)
+                .and_then(|stage| stage.next_stage())
+                .map(|stage| stage.as_str().to_string()),
         }
     }
 
@@ -241,6 +271,9 @@ impl AgentWorkflowState {
                 .map(|stage| stage.instruction().to_string())
                 .unwrap_or_else(|| "Complete the current workflow stage.".to_string()),
             AgentWorkflowType::LiteratureReview => parse_literature_stage(&self.current_stage)
+                .map(|stage| stage.instruction().to_string())
+                .unwrap_or_else(|| "Complete the current workflow stage.".to_string()),
+            AgentWorkflowType::PeerReview => parse_peer_review_stage(&self.current_stage)
                 .map(|stage| stage.instruction().to_string())
                 .unwrap_or_else(|| "Complete the current workflow stage.".to_string()),
         }
@@ -266,6 +299,17 @@ fn parse_literature_stage(value: &str) -> Option<LiteratureReviewStage> {
         "paper_analysis" => Some(LiteratureReviewStage::PaperAnalysis),
         "evidence_synthesis" => Some(LiteratureReviewStage::EvidenceSynthesis),
         "completed" => Some(LiteratureReviewStage::Completed),
+        _ => None,
+    }
+}
+
+fn parse_peer_review_stage(value: &str) -> Option<PeerReviewStage> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "scope_and_criteria" => Some(PeerReviewStage::ScopeAndCriteria),
+        "section_review" => Some(PeerReviewStage::SectionReview),
+        "statistics_review" => Some(PeerReviewStage::StatisticsReview),
+        "report_and_revision_plan" => Some(PeerReviewStage::ReportAndRevisionPlan),
+        "completed" => Some(PeerReviewStage::Completed),
         _ => None,
     }
 }
@@ -317,6 +361,20 @@ mod tests {
             .unwrap();
         assert_eq!(transition.from_stage, "pico_scoping");
         assert_eq!(transition.to_stage, "search_and_screen");
+        assert!(!transition.completed);
+    }
+
+    #[test]
+    fn peer_review_workflow_advances_after_approval() {
+        let mut workflow = AgentWorkflowState::new_peer_review("tab-1", "/tmp/project", None);
+        assert_eq!(workflow.current_stage, "scope_and_criteria");
+        workflow.mark_stage_completed("Defined review scope and criteria.");
+
+        let transition = workflow
+            .apply_checkpoint_decision(WorkflowCheckpointDecision::ApproveStage)
+            .unwrap();
+        assert_eq!(transition.from_stage, "scope_and_criteria");
+        assert_eq!(transition.to_stage, "section_review");
         assert!(!transition.completed);
     }
 }

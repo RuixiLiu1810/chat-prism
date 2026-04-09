@@ -511,6 +511,42 @@ pub fn tool_result_feedback_for_model(result: &AgentToolResult) -> String {
             )
         }
         "compare_papers" | "synthesize_evidence" | "extract_methodology" => result.preview.clone(),
+        "review_manuscript" => result
+            .content
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "Peer review scan completed.".to_string()),
+        "check_statistics" => result
+            .content
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "Statistics review completed.".to_string()),
+        "verify_references" => result
+            .content
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "Reference verification completed.".to_string()),
+        "generate_response_letter" => {
+            let letter = result
+                .content
+                .get("letter")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if letter.is_empty() {
+                "Response letter draft generated.".to_string()
+            } else {
+                format!("Response letter draft:\n{}", letter)
+            }
+        }
+        "track_revisions" => result
+            .content
+            .get("summary")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "Revision tracking completed.".to_string()),
         _ => {
             if result.preview.trim().is_empty() {
                 "Tool completed successfully.".to_string()

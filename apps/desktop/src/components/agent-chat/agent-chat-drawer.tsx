@@ -21,6 +21,7 @@ import { ChatComposer } from "./chat-composer";
 import { ChatTabBar } from "./chat-tab-bar";
 import { WorkflowCheckpointCard } from "./workflow-checkpoint-card";
 import { LiteratureReviewPanel } from "@/components/agent/LiteratureReviewPanel";
+import { PeerReviewPanel } from "@/components/agent/PeerReviewPanel";
 
 const MIN_HEIGHT = 150;
 const DEFAULT_HEIGHT = 360;
@@ -407,6 +408,7 @@ export function AgentChatDrawer() {
         ) : null}
 
         <LiteratureReviewPanel />
+        <PeerReviewPanel />
 
         {/* Messages area */}
         <div className="relative min-h-0 flex-1 overflow-hidden">

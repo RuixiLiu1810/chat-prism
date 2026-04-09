@@ -13,6 +13,8 @@ mod document;
 mod edit;
 #[path = "tools/literature.rs"]
 mod literature;
+#[path = "tools/review.rs"]
+mod review;
 #[path = "tools/shell.rs"]
 mod shell;
 #[path = "tools/workspace.rs"]
@@ -49,6 +51,10 @@ pub(crate) use edit::{
 pub(crate) use literature::{
     execute_analyze_paper, execute_compare_papers, execute_extract_methodology,
     execute_search_literature, execute_synthesize_evidence,
+};
+pub(crate) use review::{
+    execute_check_statistics, execute_generate_response_letter, execute_review_manuscript,
+    execute_track_revisions, execute_verify_references,
 };
 pub(crate) use shell::execute_run_shell_command;
 pub(crate) use workspace::{execute_list_files, execute_read_file, execute_search_project};
@@ -240,6 +246,20 @@ pub fn tool_contract(tool_name: &str) -> AgentToolContract {
             result_shape: ToolResultShape::WritingOutput,
             parallel_safe: true,
             approval_bucket: "writing_review",
+        },
+        "review_manuscript"
+        | "check_statistics"
+        | "verify_references"
+        | "generate_response_letter"
+        | "track_revisions" => AgentToolContract {
+            capability_class: ToolCapabilityClass::ReviewWriting,
+            resource_scope: ToolResourceScope::Workspace,
+            approval_policy: ToolApprovalPolicy::Never,
+            review_policy: ToolReviewPolicy::None,
+            suspend_behavior: ToolSuspendBehavior::None,
+            result_shape: ToolResultShape::WritingOutput,
+            parallel_safe: true,
+            approval_bucket: "peer_review",
         },
         "replace_selected_text" | "apply_text_patch" => AgentToolContract {
             capability_class: ToolCapabilityClass::EditPatch,
@@ -627,6 +647,84 @@ fn build_default_tool_specs(include_writing_tools: bool) -> Vec<AgentToolSpec> {
                     "additionalProperties": false
                 }),
             ),
+            make_tool_spec(
+                "review_manuscript",
+                "Perform a structured peer-review scan on manuscript text or file/document path and return severity-tagged findings.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Optional project-relative manuscript path (supports PDF/DOCX via document runtime)." },
+                        "text": { "type": "string", "description": "Optional inline manuscript text if path is not provided." },
+                        "focus": { "type": "string", "description": "Optional review focus (e.g., novelty, methods rigor, clarity)." },
+                        "checklist": {
+                            "description": "Optional checklist tags such as CONSORT/PRISMA/STROBE.",
+                            "oneOf": [
+                                { "type": "array", "items": { "type": "string" } },
+                                { "type": "string" }
+                            ]
+                        }
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            make_tool_spec(
+                "check_statistics",
+                "Check statistical reporting quality in manuscript text and flag unsupported significance claims or missing uncertainty reporting.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Optional project-relative manuscript path." },
+                        "text": { "type": "string", "description": "Optional inline manuscript text if path is not provided." }
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            make_tool_spec(
+                "verify_references",
+                "Verify internal citation-style consistency and detect potentially uncited narrative claims.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Optional project-relative manuscript path." },
+                        "text": { "type": "string", "description": "Optional inline manuscript text if path is not provided." }
+                    },
+                    "additionalProperties": false
+                }),
+            ),
+            make_tool_spec(
+                "generate_response_letter",
+                "Generate a point-by-point response letter draft from reviewer comments and optional revision plan notes.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "reviewer_comments": {
+                            "description": "Reviewer comments as an array or newline-delimited string.",
+                            "oneOf": [
+                                { "type": "array", "items": { "type": "string" } },
+                                { "type": "string" }
+                            ]
+                        },
+                        "revision_plan": { "type": "string", "description": "Optional high-level revision summary." },
+                        "tone": { "type": "string", "description": "Optional response tone (default professional)." }
+                    },
+                    "required": ["reviewer_comments"],
+                    "additionalProperties": false
+                }),
+            ),
+            make_tool_spec(
+                "track_revisions",
+                "Track revision delta between old and new text (inline or file paths) and summarize changed line/word counts.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "old_text": { "type": "string", "description": "Old manuscript text." },
+                        "new_text": { "type": "string", "description": "New manuscript text." },
+                        "old_path": { "type": "string", "description": "Path to old version file if old_text is omitted." },
+                        "new_path": { "type": "string", "description": "Path to new version file if new_text is omitted." }
+                    },
+                    "additionalProperties": false
+                }),
+            ),
         ]);
     }
 
@@ -832,6 +930,21 @@ pub async fn execute_tool_call(
             execute_generate_abstract(project_root, &call.call_id, parsed_args, cancel_rx).await
         }
         "insert_citation" => execute_insert_citation(&call.call_id, parsed_args, cancel_rx).await,
+        "review_manuscript" => {
+            execute_review_manuscript(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "check_statistics" => {
+            execute_check_statistics(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "verify_references" => {
+            execute_verify_references(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
+        "generate_response_letter" => {
+            execute_generate_response_letter(&call.call_id, parsed_args, cancel_rx).await
+        }
+        "track_revisions" => {
+            execute_track_revisions(project_root, &call.call_id, parsed_args, cancel_rx).await
+        }
         "replace_selected_text" => {
             execute_replace_selected_text(
                 runtime_state,

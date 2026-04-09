@@ -212,6 +212,34 @@ function looksLikeLiteratureReviewIntent(prompt: string): boolean {
   );
 }
 
+function looksLikePeerReviewIntent(prompt: string): boolean {
+  const lower = prompt.toLowerCase();
+  const englishSignals = [
+    "peer review",
+    "review this manuscript",
+    "review this paper",
+    "review comments",
+    "response letter",
+    "revision plan",
+    "check statistics",
+    "check references",
+  ];
+  const chineseSignals = [
+    "审稿",
+    "评审论文",
+    "审查论文",
+    "回复审稿意见",
+    "回复信",
+    "修回计划",
+    "统计检查",
+    "参考文献检查",
+  ];
+  return (
+    englishSignals.some((needle) => lower.includes(needle)) ||
+    chineseSignals.some((needle) => prompt.includes(needle))
+  );
+}
+
 interface ClaudeSessionInfo {
   session_id: string;
   title: string;
@@ -662,7 +690,8 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
     ).toLowerCase();
     const canContinueWorkflow =
       (existingWorkflowType === "paper_drafting" ||
-        existingWorkflowType === "literature_review") &&
+        existingWorkflowType === "literature_review" ||
+        existingWorkflowType === "peer_review") &&
       !existingWorkflow?.completed;
     const workflowTypeToRun =
       runtime !== "local_agent"
@@ -675,6 +704,9 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
             : turnProfile.taskKind === "literature_review" ||
                 looksLikeLiteratureReviewIntent(userPrompt)
               ? "literature_review"
+              : turnProfile.taskKind === "peer_review" ||
+                  looksLikePeerReviewIntent(userPrompt)
+                ? "peer_review"
               : null;
 
     log.info("invoking chat runtime", {

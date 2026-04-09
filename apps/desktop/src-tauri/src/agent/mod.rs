@@ -1030,6 +1030,25 @@ async fn run_literature_review_workflow_turn(
     .await
 }
 
+async fn run_peer_review_workflow_turn(
+    window: &WebviewWindow,
+    state: &AgentRuntimeState,
+    runtime: &settings::AgentRuntimeConfig,
+    request: AgentTurnDescriptor,
+    workflow: AgentWorkflowState,
+) -> Result<String, String> {
+    run_checkpointed_workflow_turn(
+        window,
+        state,
+        runtime,
+        request,
+        workflow,
+        AgentWorkflowType::PeerReview.as_str(),
+        AgentTaskKind::PeerReview,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod prompt_tests {
     use super::{
@@ -1649,6 +1668,7 @@ pub async fn agent_start_workflow(
     let workflow_type = match workflow_kind.as_str() {
         "paper_drafting" => AgentWorkflowType::PaperDrafting,
         "literature_review" => AgentWorkflowType::LiteratureReview,
+        "peer_review" => AgentWorkflowType::PeerReview,
         _ => return Err(format!("Unsupported workflow type: {}", workflow_kind)),
     };
 
@@ -1659,6 +1679,9 @@ pub async fn agent_start_workflow(
         }
         AgentWorkflowType::LiteratureReview => {
             AgentWorkflowState::new_literature_review(&tab_id, &project_path, model.clone())
+        }
+        AgentWorkflowType::PeerReview => {
+            AgentWorkflowState::new_peer_review(&tab_id, &project_path, model.clone())
         }
     };
     state.upsert_workflow_state(workflow.clone()).await;
@@ -1687,6 +1710,9 @@ pub async fn agent_start_workflow(
         }
         AgentWorkflowType::LiteratureReview => {
             run_literature_review_workflow_turn(&window, &state, &runtime, request, workflow).await
+        }
+        AgentWorkflowType::PeerReview => {
+            run_peer_review_workflow_turn(&window, &state, &runtime, request, workflow).await
         }
     }
 }
@@ -1730,6 +1756,9 @@ pub async fn agent_continue_workflow(
         }
         AgentWorkflowType::LiteratureReview => {
             run_literature_review_workflow_turn(&window, &state, &runtime, request, workflow).await
+        }
+        AgentWorkflowType::PeerReview => {
+            run_peer_review_workflow_turn(&window, &state, &runtime, request, workflow).await
         }
     }
 }
