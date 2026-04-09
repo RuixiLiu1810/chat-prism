@@ -29,7 +29,10 @@ pub(crate) fn classify_http_status(status: u16) -> (bool, bool, String, String) 
     )
 }
 
-pub(crate) fn classify_runtime_probe_status(status: u16, capability: &str) -> (bool, bool, String, String) {
+pub(crate) fn classify_runtime_probe_status(
+    status: u16,
+    capability: &str,
+) -> (bool, bool, String, String) {
     let capability_label = match capability {
         "responses" => "Responses API",
         "chat_completions" => "Chat Completions API",

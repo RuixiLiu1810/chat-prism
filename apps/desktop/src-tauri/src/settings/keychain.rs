@@ -125,7 +125,10 @@ pub(crate) fn resolve_secret_value(secret: &Value, path: &[&str], service: &str)
     keychain_read_secret(service).ok().flatten()
 }
 
-pub(crate) fn migrate_secret_values_to_keychain(secret: &mut Value, warnings: &mut Vec<String>) -> bool {
+pub(crate) fn migrate_secret_values_to_keychain(
+    secret: &mut Value,
+    warnings: &mut Vec<String>,
+) -> bool {
     let mut changed = false;
 
     let agent_in_file = read_optional_secret(secret, &["integrations", "agent", "apiKey"]);
@@ -183,7 +186,10 @@ pub(crate) fn migrate_secret_values_to_keychain(secret: &mut Value, warnings: &m
     changed
 }
 
-pub(crate) fn persist_secret_values_to_keychain_or_fallback(secret: &mut Value, warnings: &mut Vec<String>) {
+pub(crate) fn persist_secret_values_to_keychain_or_fallback(
+    secret: &mut Value,
+    warnings: &mut Vec<String>,
+) {
     let agent = read_optional_secret(secret, &["integrations", "agent", "apiKey"]);
     match agent {
         Some(value) => match keychain_store_secret(KEYCHAIN_SERVICE_AGENT_OPENAI, &value) {

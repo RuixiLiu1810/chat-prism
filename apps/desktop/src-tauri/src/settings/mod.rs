@@ -17,8 +17,8 @@ pub use types::SettingsMutationResponse;
 pub use types::SettingsResetArgs;
 pub use types::SettingsSetArgs;
 
-pub(crate) use types::AgentRuntimeConfig;
 pub(crate) use types::AgentDomainConfig;
+pub(crate) use types::AgentRuntimeConfig;
 pub(crate) use types::AgentSamplingConfig;
 pub(crate) use types::AgentSamplingProfilesConfig;
 pub(crate) use types::CitationLlmRuntimeConfig;
@@ -40,11 +40,10 @@ use keychain::{
     resolve_secret_value,
 };
 use schema::{
-    as_object, default_global_envelope, default_project_envelope,
-    default_secret_envelope, get_enum, get_in, get_string_or,
-    is_canonical_envelope_data, migrate_global_envelope, migrate_project_envelope,
-    migrate_secret_envelope, resolve_effective_settings, sanitize_global_settings,
-    sanitize_project_settings, sanitize_secret_settings, to_secrets_meta,
+    as_object, default_global_envelope, default_project_envelope, default_secret_envelope,
+    get_enum, get_in, get_string_or, is_canonical_envelope_data, migrate_global_envelope,
+    migrate_project_envelope, migrate_secret_envelope, resolve_effective_settings,
+    sanitize_global_settings, sanitize_project_settings, sanitize_secret_settings, to_secrets_meta,
 };
 use validation::{validate_global_patch, validate_project_patch, validate_secret_patch};
 
@@ -354,7 +353,10 @@ pub(crate) fn load_agent_runtime(
         "https://api.openai.com/v1",
     );
     let domain = get_enum(
-        get_in(&effective, &["integrations", "agent", "domainConfig", "domain"]),
+        get_in(
+            &effective,
+            &["integrations", "agent", "domainConfig", "domain"],
+        ),
         &["general", "biomedical", "chemistry", "custom"],
         "general",
     );

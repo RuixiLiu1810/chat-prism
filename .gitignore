@@ -100,3 +100,8 @@ external-libs/
 
 # Exclude claude-code-fork-main from dependency scanning
 claude-code-fork-main/node_modules
+
+# Local agent skill artifacts
+.agents/
+.claude/
+skills-lock.json

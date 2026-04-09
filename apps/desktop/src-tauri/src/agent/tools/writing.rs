@@ -35,9 +35,8 @@ pub(crate) async fn execute_draft_section(
         .unwrap_or(320)
         .clamp(120, 1400);
     let citation_keys = parse_string_list_arg(&args, "citation_keys");
-    let output_format = normalize_output_format(
-        tool_arg_optional_string(&args, "output_format").as_deref(),
-    );
+    let output_format =
+        normalize_output_format(tool_arg_optional_string(&args, "output_format").as_deref());
     let default_citation_style = citation_style_for_output_format(output_format);
 
     let mut paragraphs = Vec::new();
@@ -57,8 +56,7 @@ pub(crate) async fn execute_draft_section(
             .unwrap_or_default();
 
         let paragraph = if citation_tail.is_empty() {
-            format!("{}{},", lead, if idx == 0 { "" } else { " " })
-                + &sentence.to_lowercase()
+            format!("{}{},", lead, if idx == 0 { "" } else { " " }) + &sentence.to_lowercase()
         } else {
             format!(
                 "{}{}, {} {}",
@@ -121,8 +119,7 @@ pub(crate) async fn execute_draft_section(
         }),
         format!(
             "Drafted {} section (~{} words).",
-            section_type,
-            estimated_words
+            section_type, estimated_words
         ),
     )
 }
@@ -248,7 +245,9 @@ pub(crate) async fn execute_check_consistency(
     } else {
         format!(
             "Found {} consistency issues (major: {}, minor: {}).",
-            findings.len(), major, minor
+            findings.len(),
+            major,
+            minor
         )
     };
 
@@ -300,7 +299,12 @@ pub(crate) async fn execute_generate_abstract(
     let raw = if structured {
         build_structured_abstract(&sentences)
     } else {
-        sentences.iter().take(6).cloned().collect::<Vec<_>>().join(" ")
+        sentences
+            .iter()
+            .take(6)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" ")
     };
 
     let (abstract_text, truncated) = trim_to_word_limit(&raw, word_limit);
@@ -335,8 +339,11 @@ pub(crate) async fn execute_insert_citation(
         Err(message) => return error_result("insert_citation", call_id, message),
     };
 
-    let citation_key = tool_arg_optional_string(&args, "citation_key")
-        .or_else(|| parse_string_list_arg(&args, "citation_keys").first().cloned());
+    let citation_key = tool_arg_optional_string(&args, "citation_key").or_else(|| {
+        parse_string_list_arg(&args, "citation_keys")
+            .first()
+            .cloned()
+    });
     let Some(citation_key) = citation_key else {
         return error_result(
             "insert_citation",
@@ -365,7 +372,10 @@ pub(crate) async fn execute_insert_citation(
     let summary = if inserted {
         format!("Inserted citation marker {}.", marker)
     } else {
-        format!("Citation marker {} already present; skipped duplicate insert.", marker)
+        format!(
+            "Citation marker {} already present; skipped duplicate insert.",
+            marker
+        )
     };
 
     ok_result(
@@ -863,8 +873,14 @@ fn build_structured_abstract(sentences: &[String]) -> String {
     };
 
     let background = pick(&["background", "introduction", "objective", "aim"], 0);
-    let methods = pick(&["method", "protocol", "randomized", "assessed", "measured"], 1);
-    let results = pick(&["result", "improved", "increase", "decrease", "significant"], 2);
+    let methods = pick(
+        &["method", "protocol", "randomized", "assessed", "measured"],
+        1,
+    );
+    let results = pick(
+        &["result", "improved", "increase", "decrease", "significant"],
+        2,
+    );
     let conclusion = pick(&["conclusion", "suggest", "indicate", "implication"], 3);
 
     format!(
@@ -885,7 +901,11 @@ fn insert_marker_before_terminal_punctuation(text: &str, marker: &str) -> String
         .unwrap_or(false);
 
     if punctuation {
-        let split_at = trimmed.char_indices().last().map(|(idx, _)| idx).unwrap_or(0);
+        let split_at = trimmed
+            .char_indices()
+            .last()
+            .map(|(idx, _)| idx)
+            .unwrap_or(0);
         let head = &trimmed[..split_at];
         let tail = &trimmed[split_at..];
         format!("{} {}{}{}", head, marker, tail, trailing_ws)
@@ -969,9 +989,9 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(!findings.is_empty());
-        assert!(findings.iter().any(|entry| {
-            entry.get("severity") == Some(&Value::String("major".to_string()))
-        }));
+        assert!(findings
+            .iter()
+            .any(|entry| { entry.get("severity") == Some(&Value::String("major".to_string())) }));
     }
 
     #[tokio::test]
