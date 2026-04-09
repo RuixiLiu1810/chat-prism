@@ -22,6 +22,7 @@ import { ChatTabBar } from "./chat-tab-bar";
 import { WorkflowCheckpointCard } from "./workflow-checkpoint-card";
 import { LiteratureReviewPanel } from "@/components/agent/LiteratureReviewPanel";
 import { PeerReviewPanel } from "@/components/agent/PeerReviewPanel";
+import { PaperDraftingPanel } from "@/components/agent/PaperDraftingPanel";
 
 const MIN_HEIGHT = 150;
 const DEFAULT_HEIGHT = 360;
@@ -408,6 +409,7 @@ export function AgentChatDrawer() {
         ) : null}
 
         <LiteratureReviewPanel />
+        <PaperDraftingPanel />
         <PeerReviewPanel />
 
         {/* Messages area */}

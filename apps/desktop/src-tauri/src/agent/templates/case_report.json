@@ -1,0 +1,15 @@
+{
+  "id": "case_report",
+  "name": "Case Report",
+  "aliases": ["case_report", "care"],
+  "citation_style": "author-year",
+  "sections": [
+    { "id": "title", "label": "Title", "guidance": "Name case type and notable clinical feature.", "word_target": null },
+    { "id": "abstract", "label": "Abstract", "guidance": "Summarize patient context, intervention, outcome, and key lesson.", "word_target": 220 },
+    { "id": "case_presentation", "label": "Case Presentation", "guidance": "Describe patient history, timeline, and relevant examinations.", "word_target": 900 },
+    { "id": "diagnostic_assessment", "label": "Diagnostic Assessment", "guidance": "Explain diagnostic rationale and differential diagnosis.", "word_target": 500 },
+    { "id": "intervention_and_outcome", "label": "Intervention and Outcome", "guidance": "State treatment details and follow-up outcomes.", "word_target": 700 },
+    { "id": "discussion", "label": "Discussion", "guidance": "Relate case to prior reports and highlight limitations.", "word_target": 800 },
+    { "id": "references", "label": "References", "guidance": "Include references for comparison and clinical guidance.", "word_target": null }
+  ]
+}

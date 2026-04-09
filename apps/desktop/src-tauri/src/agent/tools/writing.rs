@@ -1,5 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
+use std::sync::OnceLock;
 
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::sync::watch;
 
@@ -150,11 +152,14 @@ pub(crate) async fn execute_restructure_outline(
         .unwrap_or_else(|| "imrad".to_string())
         .to_ascii_lowercase();
 
-    let template = template_sections(&manuscript_type);
+    let selected_template = select_outline_template(&manuscript_type);
+    let template_sections = selected_template
+        .map(template_section_labels)
+        .unwrap_or_else(|| fallback_template_sections(&manuscript_type));
     let mut used = BTreeSet::<usize>::new();
     let mut revised = Vec::<Value>::new();
 
-    for canonical in template {
+    for canonical in &template_sections {
         if let Some((idx, original)) = input_sections
             .iter()
             .enumerate()
@@ -164,13 +169,17 @@ pub(crate) async fn execute_restructure_outline(
             revised.push(json!({
                 "section": original,
                 "source": "existing",
-                "rationale": section_rationale(canonical)
+                "rationale": section_rationale(canonical),
+                "templateGuidance": template_guidance(selected_template, canonical),
+                "wordTarget": template_word_target(selected_template, canonical),
             }));
         } else {
             revised.push(json!({
                 "section": canonical,
                 "source": "added",
-                "rationale": section_rationale(canonical)
+                "rationale": section_rationale(canonical),
+                "templateGuidance": template_guidance(selected_template, canonical),
+                "wordTarget": template_word_target(selected_template, canonical),
             }));
         }
     }
@@ -197,6 +206,8 @@ pub(crate) async fn execute_restructure_outline(
         call_id,
         json!({
             "manuscriptType": manuscript_type,
+            "templateId": selected_template.map(|template| template.id.clone()),
+            "templateName": selected_template.map(|template| template.name.clone()),
             "originalSections": input_sections,
             "revisedOutline": revised,
             "addedSectionCount": added_count,
@@ -407,6 +418,31 @@ enum CitationStyle {
     Vancouver,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct WritingTemplateFile {
+    id: String,
+    name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    sections: Vec<WritingTemplateSection>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct WritingTemplateSection {
+    id: String,
+    label: String,
+    guidance: Option<String>,
+    word_target: Option<u16>,
+}
+
+const IMRAD_TEMPLATE_JSON: &str = include_str!("../templates/imrad_standard.json");
+const REVIEW_TEMPLATE_JSON: &str = include_str!("../templates/review_article.json");
+const CASE_REPORT_TEMPLATE_JSON: &str = include_str!("../templates/case_report.json");
+const METHODS_TEMPLATE_JSON: &str = include_str!("../templates/methods_paper.json");
+
+static WRITING_TEMPLATES: OnceLock<Vec<WritingTemplateFile>> = OnceLock::new();
+
 fn normalize_output_format(raw: Option<&str>) -> WritingOutputFormat {
     match raw.unwrap_or_default().trim().to_ascii_lowercase().as_str() {
         "latex" => WritingOutputFormat::Latex,
@@ -544,7 +580,7 @@ fn trim_to_word_limit(text: &str, limit: usize) -> (String, bool) {
     (final_text, true)
 }
 
-fn template_sections(manuscript_type: &str) -> Vec<&'static str> {
+fn fallback_template_sections(manuscript_type: &str) -> Vec<String> {
     match manuscript_type {
         "review" => vec![
             "Title",
@@ -554,7 +590,10 @@ fn template_sections(manuscript_type: &str) -> Vec<&'static str> {
             "Research Gaps",
             "Conclusion",
             "References",
-        ],
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>(),
         "case_report" => vec![
             "Title",
             "Abstract",
@@ -563,7 +602,10 @@ fn template_sections(manuscript_type: &str) -> Vec<&'static str> {
             "Intervention and Outcome",
             "Discussion",
             "References",
-        ],
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>(),
         "methods" => vec![
             "Title",
             "Abstract",
@@ -573,7 +615,10 @@ fn template_sections(manuscript_type: &str) -> Vec<&'static str> {
             "Limitations",
             "Conclusion",
             "References",
-        ],
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>(),
         _ => vec![
             "Title",
             "Abstract",
@@ -583,8 +628,83 @@ fn template_sections(manuscript_type: &str) -> Vec<&'static str> {
             "Discussion",
             "Conclusion",
             "References",
-        ],
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>(),
     }
+}
+
+fn writing_templates() -> &'static [WritingTemplateFile] {
+    WRITING_TEMPLATES.get_or_init(|| {
+        [
+            IMRAD_TEMPLATE_JSON,
+            REVIEW_TEMPLATE_JSON,
+            CASE_REPORT_TEMPLATE_JSON,
+            METHODS_TEMPLATE_JSON,
+        ]
+        .iter()
+        .filter_map(|raw| serde_json::from_str::<WritingTemplateFile>(raw).ok())
+        .collect::<Vec<_>>()
+    })
+}
+
+fn select_outline_template(manuscript_type: &str) -> Option<&'static WritingTemplateFile> {
+    let normalized = manuscript_type.trim().to_ascii_lowercase();
+    writing_templates().iter().find(|template| {
+        template.id.eq_ignore_ascii_case(&normalized)
+            || template
+                .aliases
+                .iter()
+                .any(|alias| alias.eq_ignore_ascii_case(&normalized))
+    })
+}
+
+fn template_section_labels(template: &WritingTemplateFile) -> Vec<String> {
+    template
+        .sections
+        .iter()
+        .map(|section| section.label.trim())
+        .filter(|label| !label.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>()
+}
+
+fn template_section_for<'a>(
+    template: &'a WritingTemplateFile,
+    section_label: &str,
+) -> Option<&'a WritingTemplateSection> {
+    let key = canonical_key(section_label);
+    template.sections.iter().find(|section| {
+        canonical_key(&section.label) == key
+            || canonical_key(&section.id) == key
+            || section.id.eq_ignore_ascii_case(section_label)
+    })
+}
+
+fn template_guidance(
+    template: Option<&WritingTemplateFile>,
+    section_label: &str,
+) -> Option<String> {
+    template.and_then(|template| {
+        template_section_for(template, section_label).and_then(|section| {
+            section
+                .guidance
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+    })
+}
+
+fn template_word_target(
+    template: Option<&WritingTemplateFile>,
+    section_label: &str,
+) -> Option<u16> {
+    template
+        .and_then(|template| template_section_for(template, section_label))
+        .and_then(|section| section.word_target)
 }
 
 fn canonical_key(value: &str) -> String {
@@ -921,7 +1041,7 @@ mod tests {
 
     use super::{
         execute_check_consistency, execute_draft_section, execute_generate_abstract,
-        execute_insert_citation,
+        execute_insert_citation, execute_restructure_outline, select_outline_template,
     };
 
     #[tokio::test]
@@ -1040,5 +1160,36 @@ mod tests {
 
         assert!(!result.is_error, "{:?}", result.content);
         assert_eq!(result.content["source"], json!("draft.txt"));
+    }
+
+    #[test]
+    fn template_registry_contains_expected_manuscript_types() {
+        assert!(select_outline_template("imrad").is_some());
+        assert!(select_outline_template("review").is_some());
+        assert!(select_outline_template("case_report").is_some());
+        assert!(select_outline_template("methods_paper").is_some());
+    }
+
+    #[tokio::test]
+    async fn restructure_outline_returns_template_metadata() {
+        let result = execute_restructure_outline(
+            "call-outline",
+            json!({
+                "manuscript_type": "review",
+                "sections": ["Introduction", "Conclusion"]
+            }),
+            None,
+        )
+        .await;
+        assert!(!result.is_error, "{:?}", result.content);
+        assert_eq!(result.content["templateId"], json!("review_article"));
+        assert!(result
+            .content
+            .get("revisedOutline")
+            .and_then(Value::as_array)
+            .map(|items| items
+                .iter()
+                .any(|entry| entry.get("templateGuidance").is_some()))
+            .unwrap_or(false));
     }
 }

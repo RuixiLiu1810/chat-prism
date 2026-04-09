@@ -17,6 +17,7 @@
     "citation:auto-label": "tsx scripts/auto-label-citation-top1.ts",
     "citation:sync-thresholds": "tsx scripts/sync-citation-thresholds.ts",
     "citation:calibrate": "tsx scripts/citation-calibrate-pipeline.ts",
+    "agent:workflow:smoke": "tsx scripts/agent-workflow-smoke.ts",
     "qa:release": "tsx scripts/release-check-desktop.ts",
     "qa:release:full": "tsx scripts/release-check-desktop.ts --with-rust",
     "build:macos": "TECTONIC_DEP_BACKEND=vcpkg VCPKG_ROOT=$HOME/vcpkg CXXFLAGS=-std=c++17 CFLAGS= tauri build --target aarch64-apple-darwin --no-sign",

@@ -1,0 +1,16 @@
+{
+  "id": "methods_paper",
+  "name": "Methods Paper",
+  "aliases": ["methods", "methods_paper", "protocol"],
+  "citation_style": "author-year",
+  "sections": [
+    { "id": "title", "label": "Title", "guidance": "Highlight method novelty and application domain.", "word_target": null },
+    { "id": "abstract", "label": "Abstract", "guidance": "Summarize method motivation, workflow, validation, and key advantages.", "word_target": 250 },
+    { "id": "introduction", "label": "Introduction", "guidance": "Explain problem and why existing methods are insufficient.", "word_target": 700 },
+    { "id": "methods", "label": "Methods", "guidance": "Describe algorithm/protocol components with reproducible detail.", "word_target": 1500 },
+    { "id": "validation", "label": "Validation", "guidance": "Report benchmarking strategy and robustness checks.", "word_target": 900 },
+    { "id": "limitations", "label": "Limitations", "guidance": "State boundaries and failure modes transparently.", "word_target": 300 },
+    { "id": "conclusion", "label": "Conclusion", "guidance": "Summarize practical impact and future extensions.", "word_target": 180 },
+    { "id": "references", "label": "References", "guidance": "Cite baseline and related methods comprehensively.", "word_target": null }
+  ]
+}

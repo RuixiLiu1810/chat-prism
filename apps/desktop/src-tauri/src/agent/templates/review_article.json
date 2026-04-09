@@ -1,0 +1,15 @@
+{
+  "id": "review_article",
+  "name": "Review Article",
+  "aliases": ["review", "narrative_review", "systematic_review"],
+  "citation_style": "author-year",
+  "sections": [
+    { "id": "title", "label": "Title", "guidance": "Reflect topic scope and synthesis perspective.", "word_target": null },
+    { "id": "abstract", "label": "Abstract", "guidance": "State objective, search strategy, synthesis highlights, and conclusion.", "word_target": 280 },
+    { "id": "introduction", "label": "Introduction", "guidance": "Define problem, why synthesis is needed, and review scope.", "word_target": 900 },
+    { "id": "thematic_evidence_synthesis", "label": "Thematic Evidence Synthesis", "guidance": "Organize studies by themes, compare agreements and conflicts.", "word_target": 1800 },
+    { "id": "research_gaps", "label": "Research Gaps", "guidance": "Identify unresolved questions and methodological gaps.", "word_target": 500 },
+    { "id": "conclusion", "label": "Conclusion", "guidance": "Summarize consensus and high-priority next steps.", "word_target": 220 },
+    { "id": "references", "label": "References", "guidance": "Document all cited evidence with consistent formatting.", "word_target": null }
+  ]
+}

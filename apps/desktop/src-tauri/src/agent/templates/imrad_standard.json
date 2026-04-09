@@ -1,0 +1,16 @@
+{
+  "id": "imrad_standard",
+  "name": "IMRaD Standard",
+  "aliases": ["imrad", "standard", "research_article"],
+  "citation_style": "author-year",
+  "sections": [
+    { "id": "title", "label": "Title", "guidance": "State intervention/model and core contribution clearly.", "word_target": null },
+    { "id": "abstract", "label": "Abstract", "guidance": "Summarize background, methods, results, and conclusion with evidence-backed claims.", "word_target": 250 },
+    { "id": "introduction", "label": "Introduction", "guidance": "Move from background to knowledge gap, then objective/hypothesis.", "word_target": 800 },
+    { "id": "methods", "label": "Methods", "guidance": "Describe study design, materials, protocol, and statistics for reproducibility.", "word_target": 1200 },
+    { "id": "results", "label": "Results", "guidance": "Report outcomes objectively with figure/table references.", "word_target": 1200 },
+    { "id": "discussion", "label": "Discussion", "guidance": "Interpret findings, compare literature, state limitations and implications.", "word_target": 1000 },
+    { "id": "conclusion", "label": "Conclusion", "guidance": "Provide concise take-home message and future direction.", "word_target": 180 },
+    { "id": "references", "label": "References", "guidance": "Include complete, style-consistent citations.", "word_target": null }
+  ]
+}
