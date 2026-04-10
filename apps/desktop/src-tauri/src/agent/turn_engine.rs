@@ -110,8 +110,24 @@ impl TurnBudget {
 }
 
 fn estimate_tokens(text: &str) -> u32 {
-    let chars = text.chars().count();
-    chars.div_ceil(4) as u32
+    let mut cjk_chars = 0u32;
+    let mut other_chars = 0u32;
+    for c in text.chars() {
+        if is_cjk_char(c) {
+            cjk_chars += 1;
+        } else {
+            other_chars += 1;
+        }
+    }
+    // CJK: ~1.5 tokens per character; ASCII: ~0.25 tokens per character
+    (cjk_chars * 3 + other_chars).div_ceil(4)
+}
+
+fn is_cjk_char(c: char) -> bool {
+    ('\u{4E00}'..='\u{9FFF}').contains(&c)
+        || ('\u{3400}'..='\u{4DBF}').contains(&c)
+        || ('\u{F900}'..='\u{FAFF}').contains(&c)
+        || ('\u{20000}'..='\u{2A6DF}').contains(&c)
 }
 
 fn request_has_binary_attachment_context(request: &AgentTurnDescriptor) -> bool {
@@ -139,6 +155,33 @@ pub fn should_surface_assistant_text(text: &str, tool_calls: &[AgentToolCall]) -
 }
 
 pub fn tool_result_feedback_for_model(result: &AgentToolResult) -> String {
+    let raw = tool_result_feedback_for_model_inner(result);
+    truncate_tool_feedback(raw, &result.tool_name)
+}
+
+const TOOL_RESULT_MAX_CHARS: usize = 4000;
+
+fn truncate_tool_feedback(text: String, tool_name: &str) -> String {
+    if text.chars().count() <= TOOL_RESULT_MAX_CHARS {
+        return text;
+    }
+    let truncated: String = text.chars().take(TOOL_RESULT_MAX_CHARS).collect();
+    let recovery_hint = match tool_name {
+        "read_file" => " Call read_file with a specific line range to see the rest.",
+        "run_shell_command" => " The full output was truncated.",
+        "read_document" | "read_document_excerpt" | "search_document_text"
+        | "get_document_evidence" => {
+            " Use search_document_text with a more specific query to find relevant sections."
+        }
+        _ => "",
+    };
+    format!(
+        "{}...\n[Output truncated at {} chars.{}]",
+        truncated, TOOL_RESULT_MAX_CHARS, recovery_hint
+    )
+}
+
+fn tool_result_feedback_for_model_inner(result: &AgentToolResult) -> String {
     let approval_required = result
         .content
         .get("approvalRequired")

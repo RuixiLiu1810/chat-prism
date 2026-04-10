@@ -21,6 +21,52 @@ const TOOL_EXECUTION_LOG_FILE: &str = "tool-execution.jsonl";
 const WORKFLOW_STATES_FILE: &str = "workflow-states.json";
 const SESSION_WORK_STATES_FILE: &str = "session-work-states.json";
 
+const MEMORY_DIR: &str = "memory";
+const MEMORY_INDEX_FILE: &str = "index.json";
+const MEMORY_MAX_ENTRIES: usize = 50;
+const MEMORY_INJECTION_TOKEN_BUDGET: usize = 2000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryType {
+    UserPreference,
+    ProjectConvention,
+    Correction,
+    Reference,
+}
+
+impl std::fmt::Display for MemoryType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoryType::UserPreference => write!(f, "preference"),
+            MemoryType::ProjectConvention => write!(f, "convention"),
+            MemoryType::Correction => write!(f, "correction"),
+            MemoryType::Reference => write!(f, "reference"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryEntry {
+    pub id: String,
+    pub memory_type: MemoryType,
+    pub content: String,
+    pub topic: Option<String>,
+    pub source_session: Option<String>,
+    pub created_at: String,
+    pub last_accessed: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryIndex {
+    #[serde(default)]
+    pub entries: Vec<MemoryEntry>,
+    #[serde(default)]
+    pub version: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionRecord {
@@ -222,6 +268,7 @@ pub struct AgentRuntimeState {
     pub tab_work_states: Arc<Mutex<HashMap<String, AgentSessionWorkState>>>,
     pub session_work_states: Arc<Mutex<HashMap<String, AgentSessionWorkState>>>,
     pub workflows: Arc<Mutex<HashMap<String, AgentWorkflowState>>>,
+    pub memory_index: Arc<Mutex<MemoryIndex>>,
     persistence_dir: Arc<Mutex<Option<PathBuf>>>,
     persistence_loaded: Arc<Mutex<bool>>,
     telemetry_log_path: Arc<Mutex<Option<PathBuf>>>,
@@ -238,6 +285,7 @@ impl Default for AgentRuntimeState {
             tab_work_states: Arc::new(Mutex::new(HashMap::new())),
             session_work_states: Arc::new(Mutex::new(HashMap::new())),
             workflows: Arc::new(Mutex::new(HashMap::new())),
+            memory_index: Arc::new(Mutex::new(MemoryIndex::default())),
             persistence_dir: Arc::new(Mutex::new(None)),
             persistence_loaded: Arc::new(Mutex::new(false)),
             telemetry_log_path: Arc::new(Mutex::new(None)),
@@ -274,6 +322,7 @@ impl AgentRuntimeState {
         let pending_path = base_dir.join(PENDING_TURNS_FILE);
         let workflows_path = base_dir.join(WORKFLOW_STATES_FILE);
         let session_work_states_path = base_dir.join(SESSION_WORK_STATES_FILE);
+        let memory_dir = base_dir.join(MEMORY_DIR);
 
         let mut approvals =
             read_json_file::<HashMap<String, HashMap<String, ToolApprovalRecord>>>(&approvals_path)
@@ -285,6 +334,8 @@ impl AgentRuntimeState {
         let session_work_states =
             read_json_file::<HashMap<String, AgentSessionWorkState>>(&session_work_states_path)
                 .await?;
+
+        let memory_index = load_memory_index(&memory_dir).await;
 
         let approvals_dirty = cleanup_expired_tool_approvals(&mut approvals);
         let pending_dirty = cleanup_expired_pending_turns(&mut pending_turns);
@@ -304,6 +355,10 @@ impl AgentRuntimeState {
         {
             let mut session_states = self.session_work_states.lock().await;
             *session_states = session_work_states;
+        }
+        {
+            let mut mem = self.memory_index.lock().await;
+            *mem = memory_index;
         }
 
         {
@@ -1078,6 +1133,79 @@ impl AgentRuntimeState {
             .map(|dir| dir.join(file_name))
     }
 
+    async fn memory_dir(&self) -> Option<PathBuf> {
+        self.persistence_dir
+            .lock()
+            .await
+            .clone()
+            .map(|dir| dir.join(MEMORY_DIR))
+    }
+
+    pub async fn save_memory_entry(&self, entry: MemoryEntry) -> Result<(), String> {
+        let Some(dir) = self.memory_dir().await else {
+            return Err("Memory persistence not initialized".to_string());
+        };
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| format!("Failed to create memory dir: {}", e))?;
+
+        let mut index = self.memory_index.lock().await;
+
+        // Deduplicate: if same content already exists, update last_accessed only
+        if let Some(existing) = index
+            .entries
+            .iter_mut()
+            .find(|e| e.content == entry.content)
+        {
+            existing.last_accessed = Utc::now().to_rfc3339();
+            let snapshot = index.clone();
+            drop(index);
+            write_json_file(&dir.join(MEMORY_INDEX_FILE), &snapshot).await?;
+            return Ok(());
+        }
+
+        index.entries.push(entry);
+        index.version += 1;
+
+        // Enforce max entries: drop oldest by last_accessed
+        if index.entries.len() > MEMORY_MAX_ENTRIES {
+            index
+                .entries
+                .sort_by(|a, b| b.last_accessed.cmp(&a.last_accessed));
+            index.entries.truncate(MEMORY_MAX_ENTRIES);
+        }
+
+        let snapshot = index.clone();
+        drop(index);
+
+        write_json_file(&dir.join(MEMORY_INDEX_FILE), &snapshot).await
+    }
+
+    pub async fn build_memory_context(&self) -> String {
+        let index = self.memory_index.lock().await;
+        if index.entries.is_empty() {
+            return String::new();
+        }
+
+        let mut sorted = index.entries.clone();
+        sorted.sort_by(|a, b| b.last_accessed.cmp(&a.last_accessed));
+
+        let mut result = String::from("[Project Memory]\n");
+        let mut token_budget = MEMORY_INJECTION_TOKEN_BUDGET;
+
+        for entry in &sorted {
+            let line = format!("- [{}] {}\n", entry.memory_type, entry.content);
+            let line_tokens = estimate_memory_tokens(&line);
+            if line_tokens > token_budget {
+                break;
+            }
+            token_budget -= line_tokens;
+            result.push_str(&line);
+        }
+
+        result
+    }
+
     async fn update_work_state<F>(
         &self,
         tab_id: &str,
@@ -1439,6 +1567,35 @@ fn cleanup_expired_pending_turns(pending_turns: &mut HashMap<String, PendingTurn
     let before = pending_turns.len();
     pending_turns.retain(|_, pending| !pending_turn_is_expired(pending));
     before != pending_turns.len()
+}
+
+async fn load_memory_index(memory_dir: &PathBuf) -> MemoryIndex {
+    let index_path = memory_dir.join(MEMORY_INDEX_FILE);
+    match read_json_file::<MemoryIndex>(&index_path).await {
+        Ok(index) => index,
+        Err(_) => MemoryIndex::default(),
+    }
+}
+
+fn estimate_memory_tokens(text: &str) -> usize {
+    let mut cjk_chars = 0usize;
+    let mut other_chars = 0usize;
+    for c in text.chars() {
+        if is_cjk_char(c) {
+            cjk_chars += 1;
+        } else {
+            other_chars += 1;
+        }
+    }
+    // CJK: ~1.5 tokens per character; ASCII: ~0.25 tokens per character
+    (cjk_chars * 3 + other_chars).div_ceil(4)
+}
+
+fn is_cjk_char(c: char) -> bool {
+    ('\u{4E00}'..='\u{9FFF}').contains(&c)
+        || ('\u{3400}'..='\u{4DBF}').contains(&c)
+        || ('\u{F900}'..='\u{FAFF}').contains(&c)
+        || ('\u{20000}'..='\u{2A6DF}').contains(&c)
 }
 
 async fn read_json_file<T>(path: &PathBuf) -> Result<T, String>

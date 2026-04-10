@@ -15,6 +15,8 @@ mod edit;
 mod literature;
 #[path = "tools/review.rs"]
 mod review;
+#[path = "tools/memory.rs"]
+mod memory;
 #[path = "tools/shell.rs"]
 mod shell;
 #[path = "tools/workspace.rs"]
@@ -56,6 +58,7 @@ pub(crate) use review::{
     execute_check_statistics, execute_generate_response_letter, execute_review_manuscript,
     execute_track_revisions, execute_verify_references,
 };
+pub(crate) use memory::execute_remember_fact;
 pub(crate) use shell::execute_run_shell_command;
 pub(crate) use workspace::{execute_list_files, execute_read_file, execute_search_project};
 pub(crate) use writing::{
@@ -98,6 +101,7 @@ pub enum ToolCapabilityClass {
     ListWorkspace,
     SearchWorkspace,
     ExecuteShell,
+    MemoryWrite,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +315,16 @@ pub fn tool_contract(tool_name: &str) -> AgentToolContract {
             parallel_safe: false,
             approval_bucket: "run_shell_command",
         },
+        "remember_fact" => AgentToolContract {
+            capability_class: ToolCapabilityClass::MemoryWrite,
+            resource_scope: ToolResourceScope::Workspace,
+            approval_policy: ToolApprovalPolicy::Never,
+            review_policy: ToolReviewPolicy::None,
+            suspend_behavior: ToolSuspendBehavior::None,
+            result_shape: ToolResultShape::TextRead,
+            parallel_safe: false,
+            approval_bucket: "remember_fact",
+        },
         _ => AgentToolContract {
             capability_class: ToolCapabilityClass::SearchWorkspace,
             resource_scope: ToolResourceScope::Workspace,
@@ -354,6 +368,7 @@ pub fn tool_display_kind(tool_name: &str) -> &'static str {
             "workspace_search"
         }
         ToolCapabilityClass::ExecuteShell => "shell_command",
+        ToolCapabilityClass::MemoryWrite => "memory_write",
     }
 }
 
@@ -807,6 +822,20 @@ fn build_default_tool_specs(include_writing_tools: bool) -> Vec<AgentToolSpec> {
                 "additionalProperties": false
             }),
         ),
+        make_tool_spec(
+            "remember_fact",
+            "Save an important fact to persistent memory. Use this to remember user preferences, project conventions, corrections, or key findings that should survive across sessions.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "content": { "type": "string", "description": "The fact or preference to remember." },
+                    "memory_type": { "type": "string", "enum": ["user_preference", "project_convention", "correction", "reference"], "description": "Category of the memory entry." },
+                    "topic": { "type": "string", "description": "Optional topic tag for grouping related memories." }
+                },
+                "required": ["content"],
+                "additionalProperties": false
+            }),
+        ),
     ]);
 
     specs
@@ -994,6 +1023,9 @@ pub async fn execute_tool_call(
                 cancel_rx,
             )
             .await
+        }
+        "remember_fact" => {
+            execute_remember_fact(runtime_state, &call.call_id, parsed_args, cancel_rx).await
         }
         other => error_result(
             other,

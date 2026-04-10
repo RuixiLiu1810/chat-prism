@@ -466,6 +466,7 @@ pub fn build_agent_instructions_with_work_state(
     request: &AgentTurnDescriptor,
     work_state: Option<&AgentSessionWorkState>,
     runtime_config: Option<&settings::AgentRuntimeConfig>,
+    memory_context: Option<&str>,
 ) -> String {
     let mut instructions = AGENT_BASE_INSTRUCTIONS.to_string();
     let profile = resolve_turn_profile(request);
@@ -503,6 +504,16 @@ pub fn build_agent_instructions_with_work_state(
         {
             instructions.push_str(&provider_block);
             if !provider_block.ends_with('\n') {
+                instructions.push('\n');
+            }
+        }
+    }
+
+    if let Some(mem) = memory_context {
+        if !mem.is_empty() {
+            instructions.push('\n');
+            instructions.push_str(mem);
+            if !mem.ends_with('\n') {
                 instructions.push('\n');
             }
         }
@@ -769,7 +780,7 @@ fn selective_session_recall(
 
 #[allow(dead_code)]
 pub fn build_agent_instructions(request: &AgentTurnDescriptor) -> String {
-    build_agent_instructions_with_work_state(request, None, None)
+    build_agent_instructions_with_work_state(request, None, None, None)
 }
 
 pub async fn agent_instructions_for_request(
@@ -780,7 +791,13 @@ pub async fn agent_instructions_for_request(
     let work_state = state
         .work_state_for_prompt(&request.tab_id, request.local_session_id.as_deref())
         .await;
-    build_agent_instructions_with_work_state(request, Some(&work_state), runtime_config)
+    let memory_context = state.build_memory_context().await;
+    let mem_ref = if memory_context.is_empty() {
+        None
+    } else {
+        Some(memory_context.as_str())
+    };
+    build_agent_instructions_with_work_state(request, Some(&work_state), runtime_config, mem_ref)
 }
 
 fn emit_agent_event(window: &WebviewWindow, tab_id: &str, payload: AgentEventPayload) {
@@ -1372,7 +1389,7 @@ mod prompt_tests {
     fn biomedical_domain_instructions_are_injected_when_runtime_domain_is_biomedical() {
         let request = make_request("Summarize the trial results.", None);
         let runtime = make_runtime("biomedical", Some("Prefer CONSORT-aligned critique."));
-        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime));
+        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime), None);
         assert!(instructions.contains("[Biomedical domain guardrails]"));
         assert!(instructions.contains("[Custom domain instructions]"));
         assert!(instructions.contains("CONSORT-aligned critique"));
@@ -1389,7 +1406,7 @@ mod prompt_tests {
             }),
         );
         let runtime = make_runtime("general", None);
-        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime));
+        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime), None);
         assert!(instructions.contains("[Provider operating note]"));
         assert!(instructions.contains("Maintain strong reasoning depth"));
         assert!(instructions.contains("at least 3 evidence-backed points"));
@@ -1400,7 +1417,7 @@ mod prompt_tests {
         let request = make_request("Summarize key findings.", None);
         let mut runtime = make_runtime("general", None);
         runtime.provider = "openai".to_string();
-        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime));
+        let instructions = build_agent_instructions_with_work_state(&request, None, Some(&runtime), None);
         assert!(instructions.contains("[Provider operating note]"));
         assert!(instructions.contains("strict JSON"));
     }
@@ -1473,7 +1490,7 @@ mod prompt_tests {
         };
 
         let instructions =
-            build_agent_instructions_with_work_state(&request, Some(&work_state), None);
+            build_agent_instructions_with_work_state(&request, Some(&work_state), None, None);
         assert!(instructions.contains("[Selective session recall]"));
         assert!(instructions.contains(
             "Recent objective: Compare the attached papers for hydrophobic experiments."
@@ -1506,7 +1523,7 @@ mod prompt_tests {
         };
 
         let instructions =
-            build_agent_instructions_with_work_state(&request, Some(&work_state), None);
+            build_agent_instructions_with_work_state(&request, Some(&work_state), None, None);
         assert!(instructions.contains("Pending state: review_ready via patch_file on main.tex"));
         assert!(instructions.contains("Working target: main.tex"));
         assert!(instructions.contains("Recent objective: tighten the related work section"));
