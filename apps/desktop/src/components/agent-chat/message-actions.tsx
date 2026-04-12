@@ -146,6 +146,11 @@ export const MessageActions: FC<MessageActionsProps> = ({
     }
   }, [messages, resolvedIndex, sendPrompt, isStreaming]);
 
+  // During streaming, completely hide actions on assistant messages
+  if (isStreaming && message.type === "assistant") {
+    return null;
+  }
+
   const showCopy = Boolean(text);
   const showEdit = message.type === "user";
   const showRetry = message.type === "assistant" && canRetry;

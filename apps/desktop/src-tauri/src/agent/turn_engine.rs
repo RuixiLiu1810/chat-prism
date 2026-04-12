@@ -1,5 +1,8 @@
 use futures::future::join_all;
 use serde_json::{json, Value};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use tauri::{Emitter, WebviewWindow};
 use tokio::sync::watch;
 
@@ -106,6 +109,151 @@ impl TurnBudget {
             }
         }
         Ok(())
+    }
+}
+
+// ─── Tool Call Loop Guard ───
+
+/// Tracks tool call patterns across rounds to detect repetitive loops.
+#[derive(Debug, Clone)]
+pub struct ToolCallTracker {
+    /// (tool_name, args_hash) → call count
+    call_counts: HashMap<(String, u64), u32>,
+    /// Warnings generated during the latest round's record_call phase
+    pending_warnings: Vec<String>,
+    /// Files successfully read (deduplicated)
+    files_read: Vec<String>,
+    /// Files successfully edited (deduplicated)
+    files_edited: Vec<String>,
+    /// Shell commands executed (abbreviated)
+    shells_run: Vec<String>,
+    /// Current round index (0-based)
+    pub current_round: u32,
+    /// Max rounds for budget display
+    pub max_rounds: u32,
+}
+
+impl ToolCallTracker {
+    pub fn new(max_rounds: u32) -> Self {
+        Self {
+            call_counts: HashMap::new(),
+            pending_warnings: Vec::new(),
+            files_read: Vec::new(),
+            files_edited: Vec::new(),
+            shells_run: Vec::new(),
+            current_round: 0,
+            max_rounds,
+        }
+    }
+
+    fn hash_args(args: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        args.trim().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Record a tool call and return its repetition count (1 = first time).
+    pub fn record_call(&mut self, tool_name: &str, args_json: &str) -> u32 {
+        let key = (tool_name.to_string(), Self::hash_args(args_json));
+        let count = self.call_counts.entry(key).or_insert(0);
+        *count += 1;
+        let current = *count;
+
+        // Collect repetition warning if applicable
+        if current >= 3 {
+            self.pending_warnings.push(format!(
+                "[Loop detected] You have called {} with the same arguments {} times. \
+                 STOP calling this tool. Use previous results or take a different approach. \
+                 If your edit is complete, summarize the changes to the user.",
+                tool_name, current
+            ));
+        } else if current >= 2 {
+            self.pending_warnings.push(format!(
+                "[Repetition notice] You already called {} with similar arguments. \
+                 Use the previous result instead of re-calling.",
+                tool_name
+            ));
+        }
+
+        // Track by category for progress summaries
+        if let Ok(args) = serde_json::from_str::<Value>(args_json) {
+            let path = args
+                .get("path")
+                .and_then(Value::as_str)
+                .or_else(|| args.get("file_path").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string();
+            match tool_name {
+                "read_file" => {
+                    if !path.is_empty() && !self.files_read.contains(&path) {
+                        self.files_read.push(path);
+                    }
+                }
+                "apply_text_patch" | "replace_selected_text" | "write_file" => {
+                    if !path.is_empty() && !self.files_edited.contains(&path) {
+                        self.files_edited.push(path);
+                    }
+                }
+                "run_shell_command" => {
+                    if let Some(cmd) = args.get("command").and_then(Value::as_str) {
+                        let short = if cmd.len() > 60 { &cmd[..60] } else { cmd };
+                        self.shells_run.push(short.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        current
+    }
+
+    /// Build a progress checkpoint message for injection every N rounds.
+    pub fn progress_checkpoint(&self) -> String {
+        let mut parts = Vec::new();
+        parts.push(format!(
+            "[Progress checkpoint — round {}/{}]",
+            self.current_round + 1,
+            self.max_rounds
+        ));
+        if !self.files_read.is_empty() {
+            parts.push(format!("- Files read: {}", self.files_read.join(", ")));
+        }
+        if !self.files_edited.is_empty() {
+            parts.push(format!("- Files edited: {}", self.files_edited.join(", ")));
+        }
+        if !self.shells_run.is_empty() {
+            let display: Vec<&str> = self.shells_run.iter().map(|s| s.as_str()).take(5).collect();
+            parts.push(format!("- Commands run: {}", display.join("; ")));
+        }
+        parts.push(format!(
+            "- Remaining budget: {} rounds",
+            self.max_rounds.saturating_sub(self.current_round + 1)
+        ));
+        parts.push(
+            "If your task is complete, respond to the user now. \
+             Do not verify successful edits with shell commands."
+                .to_string(),
+        );
+        parts.join("\n")
+    }
+
+    /// Collect all warnings for a batch of tool calls, plus optional checkpoint.
+    /// Returns Some(system message content) if anything should be injected.
+    /// Call this AFTER record_call() for all calls in the round.
+    pub fn build_injection(&mut self, round_idx: u32) -> Option<String> {
+        let has_warnings = !self.pending_warnings.is_empty();
+        let should_checkpoint = (round_idx + 1) % 4 == 0 || has_warnings;
+        if !should_checkpoint {
+            self.pending_warnings.clear();
+            return None;
+        }
+
+        let mut msg = self.progress_checkpoint();
+        for w in self.pending_warnings.drain(..) {
+            msg.push('\n');
+            msg.push_str(&w);
+        }
+        Some(msg)
     }
 }
 
@@ -416,7 +564,7 @@ fn tool_result_feedback_for_model_inner(result: &AgentToolResult) -> String {
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
             if written {
-                format!("Edit applied successfully to {}.", path)
+                format!("Edit applied successfully to {}. Do not verify this edit with shell commands or re-read the file. Summarize the change to the user.", path)
             } else {
                 format!("Reviewable edit prepared for {}.", path)
             }
@@ -1407,7 +1555,7 @@ async fn handle_tool_result(
             result_target.as_deref(),
             Some(approval_tool_name),
             review_ready,
-            !review_ready,
+            true,
             interrupt_message,
         );
     }

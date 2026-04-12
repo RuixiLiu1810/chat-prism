@@ -110,7 +110,11 @@ fn provider_adaptive_instruction_block(
             let mut block = String::from(
                 "[Provider operating note]\n\
                 - Maintain strong reasoning depth. For analysis/literature/peer-review tasks, do not stop at a one-line conclusion; provide at least 3 evidence-backed points before final takeaway.\n\
-                - Validate tool outputs against the user question before producing final claims.\n",
+                - Validate tool outputs against the user question before producing final claims.\n\
+                - After a successful edit (tool returns 'Edit applied successfully'), do NOT run shell commands to verify the edit. Trust the tool result and summarize what was changed.\n\
+                - Do not re-read a file after you just edited it unless the user asks for another change.\n\
+                - Avoid repetitive tool calls: if you already read a file, do not read it again. If you already ran a command, do not run it again with minor variations.\n\
+                - When your edit is complete, respond with a brief summary to the user. Do not keep calling tools.\n",
             );
             if matches!(
                 profile.task_kind,
@@ -381,12 +385,12 @@ pub fn tool_choice_for_task(
 pub fn max_rounds_for_task(profile: &AgentTurnProfile) -> u32 {
     match profile.task_kind {
         AgentTaskKind::SuggestionOnly => 2,
-        AgentTaskKind::SelectionEdit => 8,
-        AgentTaskKind::FileEdit => 10,
-        AgentTaskKind::LiteratureReview => 15,
-        AgentTaskKind::PaperDrafting => 12,
-        AgentTaskKind::PeerReview => 10,
-        AgentTaskKind::Analysis | AgentTaskKind::General => 10,
+        AgentTaskKind::SelectionEdit => 12,
+        AgentTaskKind::FileEdit => 25,
+        AgentTaskKind::LiteratureReview => 30,
+        AgentTaskKind::PaperDrafting => 25,
+        AgentTaskKind::PeerReview => 20,
+        AgentTaskKind::Analysis | AgentTaskKind::General => 25,
     }
 }
 

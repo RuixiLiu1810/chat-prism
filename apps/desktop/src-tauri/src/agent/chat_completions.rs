@@ -20,7 +20,7 @@ use super::tools::{
 use super::turn_engine::{
     compact_chat_messages, emit_error, emit_status, emit_text_delta, execute_tool_calls,
     should_surface_assistant_text, tool_result_feedback_for_model,
-    tool_result_has_invalid_arguments_error, TurnBudget,
+    tool_result_has_invalid_arguments_error, ToolCallTracker, TurnBudget,
 };
 use super::{
     agent_instructions_for_request, max_rounds_for_task, resolve_turn_profile, tool_choice_for_task,
@@ -887,8 +887,10 @@ pub async fn run_turn_loop(
         .map(|(_, _, max_tokens)| max_tokens),
         cancel_rx.clone(),
     );
+    let mut tracker = ToolCallTracker::new(budget.max_rounds);
 
     for round_idx in 0..budget.max_rounds {
+        tracker.current_round = round_idx;
         budget.ensure_round_available(round_idx)?;
         let outcome = stream_chat_completions_response_once(
             Some(window),
@@ -941,6 +943,12 @@ pub async fn run_turn_loop(
 
         let mut tool_results_messages = vec![raw_assistant];
         let mut invalid_tool_arguments_detected = false;
+
+        // Record calls in tracker before execution
+        for call in &outcome.tool_calls {
+            tracker.record_call(&call.tool_name, &call.arguments);
+        }
+
         let executed_calls = execute_tool_calls(
             Some(window),
             runtime_state,
@@ -1022,6 +1030,15 @@ pub async fn run_turn_loop(
 
         next_messages.extend(tool_results_messages);
         compact_chat_messages(&mut next_messages);
+
+        // Inject loop-guard warnings / progress checkpoint
+        if let Some(injection) = tracker.build_injection(round_idx) {
+            next_messages.push(json!({
+                "role": "system",
+                "content": injection,
+            }));
+        }
+
         if invalid_tool_arguments_detected {
             next_messages.push(json!({
                 "role": "system",
@@ -1282,7 +1299,9 @@ async fn run_turn_loop_silent(
         .map(|(_, _, max_tokens)| max_tokens),
         None,
     );
+    let mut tracker = ToolCallTracker::new(budget.max_rounds);
     for round_idx in 0..budget.max_rounds {
+        tracker.current_round = round_idx;
         budget.ensure_round_available(round_idx)?;
         let outcome = stream_chat_completions_response_once(
             None,
@@ -1312,6 +1331,12 @@ async fn run_turn_loop_silent(
 
         let mut tool_results_messages = vec![raw_assistant];
         let mut invalid_tool_arguments_detected = false;
+
+        // Record calls in tracker before execution
+        for call in &outcome.tool_calls {
+            tracker.record_call(&call.tool_name, &call.arguments);
+        }
+
         let executed_calls =
             execute_tool_calls(None, &runtime_state, request, outcome.tool_calls, None).await;
         for executed in &executed_calls.executed {
@@ -1353,6 +1378,15 @@ async fn run_turn_loop_silent(
 
         next_messages.extend(tool_results_messages);
         compact_chat_messages(&mut next_messages);
+
+        // Inject loop-guard warnings / progress checkpoint
+        if let Some(injection) = tracker.build_injection(round_idx) {
+            next_messages.push(json!({
+                "role": "system",
+                "content": injection,
+            }));
+        }
+
         if invalid_tool_arguments_detected {
             next_messages.push(json!({
                 "role": "system",

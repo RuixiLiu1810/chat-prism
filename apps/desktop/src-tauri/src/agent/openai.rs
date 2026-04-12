@@ -19,7 +19,8 @@ use super::tools::{
 };
 use super::turn_engine::{
     emit_error, emit_status, emit_text_delta, execute_tool_calls, should_surface_assistant_text,
-    tool_result_feedback_for_model, tool_result_has_invalid_arguments_error, TurnBudget,
+    tool_result_feedback_for_model, tool_result_has_invalid_arguments_error, ToolCallTracker,
+    TurnBudget,
 };
 use super::{
     agent_instructions_for_request, max_rounds_for_task, resolve_turn_profile, tool_choice_for_task,
@@ -600,7 +601,9 @@ pub async fn run_turn_loop(
         .map(|(_, _, max_output_tokens)| max_output_tokens),
         cancel_rx.clone(),
     );
+    let mut tracker = ToolCallTracker::new(budget.max_rounds);
     for round_idx in 0..budget.max_rounds {
+        tracker.current_round = round_idx;
         budget.ensure_round_available(round_idx)?;
         let outcome = stream_response_once(
             window,
@@ -655,6 +658,12 @@ pub async fn run_turn_loop(
             doc_tool_rounds = doc_tool_rounds.saturating_add(1);
             doc_tool_calls = doc_tool_calls.saturating_add(round_doc_calls);
         }
+
+        // Record calls in tracker before execution
+        for call in &deduped_tool_calls {
+            tracker.record_call(&call.tool_name, &call.arguments);
+        }
+
         let executed_calls = execute_tool_calls(
             Some(window),
             runtime_state,
@@ -746,6 +755,16 @@ pub async fn run_turn_loop(
                 "Tool arguments were invalid. Retrying with strict JSON argument guidance.",
             );
         }
+
+        // Inject loop-guard warnings / progress checkpoint
+        if let Some(injection) = tracker.build_injection(round_idx) {
+            tool_outputs.push(json!({
+                "type": "message",
+                "role": "user",
+                "content": injection,
+            }));
+        }
+
         next_input = Value::Array(tool_outputs);
         emit_status(
             Some(window),

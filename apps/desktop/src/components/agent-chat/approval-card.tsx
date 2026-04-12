@@ -180,16 +180,16 @@ export const ApprovalCard: FC<ApprovalCardProps> = ({ approval }) => {
       setPending(decision);
       await setToolApproval(approval.toolName, decision);
       const shouldContinue =
-        decision !== "deny_session" && approval.canResume && !approval.reviewReady;
+        decision !== "deny_session" && approval.canResume;
       setDoneLabel(
         decision === "allow_once"
           ? shouldContinue
-            ? copy.allowedOnceContinue
-            : copy.allowedOnceReviewReady
+            ? approval.reviewReady ? copy.allowedOnceReviewReady : copy.allowedOnceContinue
+            : approval.reviewReady ? copy.allowedOnceReviewReady : copy.allowedOnceContinue
           : decision === "allow_session"
             ? shouldContinue
-              ? copy.allowedSessionContinue
-              : copy.allowedSessionReviewReady
+              ? approval.reviewReady ? copy.allowedSessionReviewReady : copy.allowedSessionContinue
+              : approval.reviewReady ? copy.allowedSessionReviewReady : copy.allowedSessionContinue
             : copy.deniedSession,
       );
       if (shouldContinue) {
