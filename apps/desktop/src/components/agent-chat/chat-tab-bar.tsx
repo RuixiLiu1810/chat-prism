@@ -3,6 +3,11 @@ import { HistoryIcon, PlusIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAgentChatStore, type TabState } from "@/stores/agent-chat-store";
 import { SessionSelector } from "./session-selector";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 export function ChatTabBar() {
   const tabs = useAgentChatStore((s) => s.tabs);
@@ -155,7 +160,14 @@ function TabButton({
           )}
         </span>
       )}
-      <span className="truncate">{tab.title}</span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="truncate">{tab.title}</span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="max-w-xs">
+          {tab.title}
+        </TooltipContent>
+      </Tooltip>
       {/* Close button — hidden for the last remaining tab or when streaming on this tab */}
       {!isLastTab && !isStreaming && (
         <span

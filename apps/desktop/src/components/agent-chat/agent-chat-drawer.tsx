@@ -1,15 +1,10 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import {
-  AlertCircleIcon,
-  CheckCircle2Icon,
   ChevronDownIcon,
-  HistoryIcon,
-  LoaderCircleIcon,
   Maximize2Icon,
   MessageCircleIcon,
   Minimize2Icon,
   PaperclipIcon,
-  SquareIcon,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -20,25 +15,32 @@ import { ChatMessages } from "./chat-messages";
 import { ChatComposer } from "./chat-composer";
 import { ChatTabBar } from "./chat-tab-bar";
 import { WorkflowCheckpointCard } from "./workflow-checkpoint-card";
-import { LiteratureReviewPanel } from "@/components/agent/LiteratureReviewPanel";
-import { PeerReviewPanel } from "@/components/agent/PeerReviewPanel";
-import { PaperDraftingPanel } from "@/components/agent/PaperDraftingPanel";
+import { toast } from "sonner";
 
 const MIN_HEIGHT = 150;
-const DEFAULT_HEIGHT = 360;
+const DEFAULT_HEIGHT = 420;
+/** Maximum ratio of parent height the drawer can occupy */
+const MAX_HEIGHT_RATIO = 0.85;
+/** Snap threshold in px — if within this distance of a snap point, snap to it */
+const SNAP_THRESHOLD = 30;
+/** Predefined snap ratios relative to parent height */
+const SNAP_RATIOS = [1 / 3, 1 / 2, 2 / 3];
 
-function formatRelativeTime(isoTime: string): string {
-  const timestamp = Date.parse(isoTime);
-  if (Number.isNaN(timestamp)) return "unknown";
-  const delta = Date.now() - timestamp;
+/** Compute the maximum allowed height from the parent element */
+function getMaxHeight(container: HTMLDivElement | null): number {
+  const parent = container?.parentElement;
+  return parent ? parent.clientHeight * MAX_HEIGHT_RATIO : 600;
+}
 
-  if (delta < 60_000) return "just now";
-  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
-  if (delta < 604_800_000) return `${Math.floor(delta / 86_400_000)}d ago`;
-
-  const date = new Date(timestamp);
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+/** Snap a raw height to the nearest snap point if within threshold */
+function snapHeight(raw: number, parentHeight: number): number {
+  for (const ratio of SNAP_RATIOS) {
+    const target = parentHeight * ratio;
+    if (Math.abs(raw - target) < SNAP_THRESHOLD) {
+      return target;
+    }
+  }
+  return raw;
 }
 
 export function AgentChatDrawer() {
@@ -49,14 +51,6 @@ export function AgentChatDrawer() {
     s.tabs.some((t) => t.isStreaming),
   );
   const error = useAgentChatStore((s) => s.error);
-  const activeSessionMeta = useAgentChatStore((s) => {
-    const active = s.tabs.find((t) => t.id === s.activeTabId);
-    return active?.sessionMeta ?? null;
-  });
-  const activeTabTitle = useAgentChatStore((s) => {
-    const active = s.tabs.find((t) => t.id === s.activeTabId);
-    return active?.title ?? "New Chat";
-  });
   const statusStage = useAgentChatStore((s) => {
     const active = s.tabs.find((t) => t.id === s.activeTabId);
     return active?.statusStage ?? null;
@@ -64,14 +58,6 @@ export function AgentChatDrawer() {
   const statusMessage = useAgentChatStore((s) => {
     const active = s.tabs.find((t) => t.id === s.activeTabId);
     return active?.statusMessage ?? null;
-  });
-  const currentWorkLabel = useAgentChatStore((s) => {
-    const active = s.tabs.find((t) => t.id === s.activeTabId);
-    return active?.currentWorkLabel ?? null;
-  });
-  const recentToolActivity = useAgentChatStore((s) => {
-    const active = s.tabs.find((t) => t.id === s.activeTabId);
-    return active?.recentToolActivity ?? null;
   });
   const pendingApproval = useAgentChatStore((s) => {
     const active = s.tabs.find((t) => t.id === s.activeTabId);
@@ -81,10 +67,6 @@ export function AgentChatDrawer() {
     const active = s.tabs.find((t) => t.id === s.activeTabId);
     return active?.pendingWorkflowCheckpoint ?? null;
   });
-  const resolvedWorkLabel = currentWorkLabel || activeSessionMeta?.currentTarget || activeSessionMeta?.pendingTarget || null;
-  const resolvedToolActivity =
-    recentToolActivity || activeSessionMeta?.lastToolActivity || null;
-  const sessionPendingState = activeSessionMeta?.pendingState ?? null;
 
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -99,23 +81,65 @@ export function AgentChatDrawer() {
   const hasDraggedRef = useRef(false);
   const heightRef = useRef(height);
   heightRef.current = height;
+  /** Remember the user's preferred height so re-opening restores it */
+  const preferredHeightRef = useRef(DEFAULT_HEIGHT);
 
   const pendingAttachments = useAgentChatStore((s) => s.pendingAttachments);
 
-  // Auto-open when streaming starts or a new attachment is added
+  // Surface status changes as toasts instead of a persistent banner
+  const prevStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = statusStage ?? null;
+    if (key === prevStatusRef.current) return;
+    prevStatusRef.current = key;
+    if (!statusMessage) return;
+
+    if (statusStage === "failed") {
+      toast.error(statusMessage, { duration: Infinity });
+    } else if (statusStage === "cancelled") {
+      toast.warning(statusMessage, { duration: 5000 });
+    } else if (statusStage === "awaiting_approval") {
+      toast.warning(statusMessage, { duration: 5000 });
+    } else if (statusStage === "resuming_after_approval") {
+      toast.info(statusMessage, { duration: 3000 });
+    } else if (statusStage === "review_ready") {
+      toast.info(statusMessage, { duration: 3000 });
+    }
+  }, [statusStage, statusMessage]);
+
+  // Auto-open when streaming starts or a new attachment is added.
+  // Restores the user's preferred height instead of always jumping to max.
   useEffect(() => {
     const shouldOpen = anyStreaming || pendingAttachments.length > 0;
     if (shouldOpen && !isOpen) {
       setIsOpen(true);
-      const parent = containerRef.current?.parentElement;
-      const maxHeight = parent ? parent.clientHeight * 0.5 : 400;
-      setHeight(maxHeight);
-      heightRef.current = maxHeight;
+      const maxHeight = getMaxHeight(containerRef.current);
+      const restored = Math.min(preferredHeightRef.current, maxHeight);
+      setHeight(restored);
+      heightRef.current = restored;
       if (panelRef.current) {
-        panelRef.current.style.height = `${maxHeight}px`;
+        panelRef.current.style.height = `${restored}px`;
       }
     }
   }, [anyStreaming, isOpen, pendingAttachments]);
+
+  // Clamp height when the window resizes so the panel never overflows
+  useEffect(() => {
+    const onResize = () => {
+      if (!isOpen || isExpanded) return;
+      const maxHeight = getMaxHeight(containerRef.current);
+      if (heightRef.current > maxHeight) {
+        const clamped = maxHeight;
+        heightRef.current = clamped;
+        setHeight(clamped);
+        if (panelRef.current) {
+          panelRef.current.style.height = `${clamped}px`;
+        }
+      }
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [isOpen, isExpanded]);
 
   // Show a ChatGPT-style overlay when dragging sidebar files over the chat panel.
   useEffect(() => {
@@ -140,6 +164,16 @@ export function AgentChatDrawer() {
     };
   }, []);
 
+  /** Apply a height value — updates refs, DOM, and React state */
+  const applyHeight = useCallback((h: number) => {
+    heightRef.current = h;
+    preferredHeightRef.current = h;
+    setHeight(h);
+    if (panelRef.current) {
+      panelRef.current.style.height = `${h}px`;
+    }
+  }, []);
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (isExpanded) return;
@@ -153,22 +187,26 @@ export function AgentChatDrawer() {
 
       const handleMouseMove = (e: MouseEvent) => {
         hasDraggedRef.current = true;
-        const parent = containerRef.current?.parentElement;
-        const maxHeight = parent ? parent.clientHeight * 0.5 : 400;
+        const maxHeight = getMaxHeight(containerRef.current);
         const delta = startY - e.clientY;
-        const newHeight = Math.min(
+        const raw = Math.min(
           Math.max(startHeight + delta, MIN_HEIGHT),
           maxHeight,
         );
-        heightRef.current = newHeight;
+        heightRef.current = raw;
         if (panelRef.current) {
-          panelRef.current.style.height = `${newHeight}px`;
+          panelRef.current.style.height = `${raw}px`;
         }
       };
 
       const handleMouseUp = () => {
         setIsDragging(false);
-        setHeight(heightRef.current);
+        // Snap to the nearest ergonomic anchor on release
+        const parentH = containerRef.current?.parentElement?.clientHeight ?? 0;
+        const snapped = parentH > 0
+          ? Math.min(Math.max(snapHeight(heightRef.current, parentH), MIN_HEIGHT), parentH * MAX_HEIGHT_RATIO)
+          : heightRef.current;
+        applyHeight(snapped);
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
       };
@@ -176,8 +214,20 @@ export function AgentChatDrawer() {
       document.addEventListener("mousemove", handleMouseMove);
       document.addEventListener("mouseup", handleMouseUp);
     },
-    [isExpanded],
+    [isExpanded, applyHeight],
   );
+
+  /** Double-click the drag handle to toggle between 1/3 and 2/3 height */
+  const handleDoubleClick = useCallback(() => {
+    if (isExpanded) return;
+    const parentH = containerRef.current?.parentElement?.clientHeight ?? 0;
+    if (parentH === 0) return;
+    const thirdH = parentH / 3;
+    const twoThirdH = (parentH * 2) / 3;
+    // If currently closer to 2/3, snap down to 1/3, and vice versa
+    const target = heightRef.current > parentH / 2 ? thirdH : twoThirdH;
+    applyHeight(target);
+  }, [isExpanded, applyHeight]);
 
   // Compute expanded dimensions from parent
   const getExpandedDimensions = useCallback(() => {
@@ -198,52 +248,6 @@ export function AgentChatDrawer() {
     }
     return { height, maxWidth: 672, borderRadius: 24 };
   };
-
-  const statusTone = statusStage === "failed"
-    ? "error"
-    : statusStage === "cancelled"
-      ? "muted"
-      : statusStage === "awaiting_approval"
-        ? "pending"
-        : statusStage === "review_ready"
-          ? "ready"
-          : statusStage
-            ? "active"
-            : "idle";
-
-  const StatusIcon =
-    statusTone === "error"
-      ? AlertCircleIcon
-      : statusTone === "muted"
-        ? SquareIcon
-        : statusTone === "pending"
-          ? AlertCircleIcon
-          : statusTone === "ready"
-            ? CheckCircle2Icon
-            : statusTone === "active"
-          ? LoaderCircleIcon
-          : CheckCircle2Icon;
-
-  const statusClassName =
-    statusTone === "error"
-      ? "border-destructive/50 bg-destructive/10 text-destructive"
-      : statusTone === "muted"
-        ? "border-border bg-muted/40 text-muted-foreground"
-        : statusTone === "pending"
-          ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-200"
-          : statusTone === "ready"
-            ? "border-blue-500/35 bg-blue-500/10 text-blue-700 dark:text-blue-200"
-        : statusTone === "active"
-          ? "border-primary/30 bg-primary/5 text-foreground"
-          : "border-border bg-muted/30 text-muted-foreground";
-  const showCompactSessionInfo = Boolean(activeSessionMeta);
-  const showStatusBanner = Boolean(
-    statusStage &&
-      statusMessage &&
-      (statusTone === "error" ||
-        statusTone === "muted" ||
-        statusStage === "resuming_after_approval"),
-  );
 
   return (
     <div
@@ -325,92 +329,48 @@ export function AgentChatDrawer() {
           </>
         ) : (
           <>
-            <div className="relative">
-              <div
-                className="group flex cursor-row-resize items-center justify-center gap-2 py-2 transition-colors hover:bg-muted/50"
-                onMouseDown={handleMouseDown}
-                onClick={() => {
-                  if (!hasDraggedRef.current) {
-                    setIsOpen(false);
-                  }
-                }}
+            {/* Header: Maximize | Drag Handle | Minimize — flex layout for breathing room */}
+            <div
+              className="flex items-center justify-between gap-2 px-3 py-2 transition-colors"
+              style={{ minHeight: 32 }}
+            >
+              <button
+                type="button"
+                onClick={() => setIsExpanded(true)}
+                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground flex-shrink-0"
+                aria-label="Fullscreen"
               >
-                <div className="h-1 w-10 rounded-full bg-muted-foreground/30 transition-all group-hover:w-8" />
-                <ChevronDownIcon className="size-4 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+                <Maximize2Icon className="size-4" />
+              </button>
+
+              {/* Drag handle in the center — drag to resize, double-click to snap toggle */}
+              <div
+                className="group flex cursor-row-resize flex-1 items-center justify-center py-2 transition-colors hover:bg-muted/50 rounded-md"
+                onMouseDown={handleMouseDown}
+                onDoubleClick={handleDoubleClick}
+              >
+                <div className="h-1 w-10 rounded-full bg-muted-foreground/30 transition-all group-hover:w-16 group-hover:bg-muted-foreground/50" />
               </div>
-              <div className="absolute top-1/2 left-2 flex -translate-y-1/2 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => setIsExpanded(true)}
-                  className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  aria-label="Fullscreen"
-                >
-                  <Maximize2Icon className="size-4" />
-                </button>
-              </div>
+
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground flex-shrink-0"
+                aria-label="Minimize chat"
+              >
+                <ChevronDownIcon className="size-4" />
+              </button>
             </div>
             <ChatTabBar />
           </>
         )}
 
-        {showCompactSessionInfo ? (
-          <div className="mx-3 mb-1 flex min-w-0 flex-wrap items-center gap-1.5 border-border/60 border-b pb-2 text-[11px] text-muted-foreground">
-            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
-              <HistoryIcon className="size-3" />
-              <span className="uppercase tracking-wide">
-                {activeSessionMeta?.provider || "session"}
-              </span>
-            </span>
-            <span className="max-w-[16rem] truncate font-medium text-foreground">
-              {activeSessionMeta?.title || activeTabTitle}
-            </span>
-            {activeSessionMeta?.model ? (
-              <span className="truncate rounded-full border border-border/70 px-2 py-0.5">
-                {activeSessionMeta.model}
-              </span>
-            ) : null}
-            {sessionPendingState ? (
-              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 uppercase tracking-wide text-amber-700 dark:text-amber-200">
-                {sessionPendingState}
-              </span>
-            ) : null}
-            {resolvedWorkLabel ? (
-              <span className="max-w-[18rem] truncate">Working on {resolvedWorkLabel}</span>
-            ) : null}
-            {!resolvedWorkLabel && resolvedToolActivity ? (
-              <span className="max-w-[18rem] truncate">{resolvedToolActivity}</span>
-            ) : null}
-            {activeSessionMeta?.updatedAt ? (
-              <span>Updated {formatRelativeTime(activeSessionMeta.updatedAt)}</span>
-            ) : null}
-          </div>
-        ) : null}
-
-        {/* Status / error banner */}
-        {showStatusBanner ? (
-          <div
-            className={cn(
-              "mx-3 mb-1 flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs",
-              statusClassName,
-            )}
-          >
-            <StatusIcon
-              className={cn(
-                "size-3.5 shrink-0",
-                statusTone === "active" && "animate-spin",
-              )}
-            />
-            <span className="truncate">{statusMessage}</span>
-          </div>
-        ) : error ? (
+        {/* Status / error — shown inline only for persistent errors */}
+        {error ? (
           <div className="mx-3 mb-1 rounded-lg border border-destructive/50 bg-destructive/10 px-3 py-1.5 text-destructive text-xs">
             {error}
           </div>
         ) : null}
-
-        <LiteratureReviewPanel />
-        <PaperDraftingPanel />
-        <PeerReviewPanel />
 
         {/* Messages area */}
         <div className="relative min-h-0 flex-1 overflow-hidden">

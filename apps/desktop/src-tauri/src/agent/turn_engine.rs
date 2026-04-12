@@ -109,7 +109,7 @@ impl TurnBudget {
     }
 }
 
-fn estimate_tokens(text: &str) -> u32 {
+pub(crate) fn estimate_tokens(text: &str) -> u32 {
     let mut cjk_chars = 0u32;
     let mut other_chars = 0u32;
     for c in text.chars() {
@@ -128,6 +128,159 @@ fn is_cjk_char(c: char) -> bool {
         || ('\u{3400}'..='\u{4DBF}').contains(&c)
         || ('\u{F900}'..='\u{FAFF}').contains(&c)
         || ('\u{20000}'..='\u{2A6DF}').contains(&c)
+}
+
+/// Token limit at which `compact_chat_messages` starts compressing older messages.
+/// Set conservatively at ~47% of DeepSeek's 128K context; well within MiniMax's 1M.
+const HISTORY_COMPACT_TOKEN_LIMIT: u32 = 60_000;
+
+/// Estimate the token count for a single chat‑completion message (JSON `Value`).
+fn estimate_message_tokens(msg: &Value) -> u32 {
+    let overhead = 4u32; // role, separators
+    let content_tokens = msg
+        .get("content")
+        .and_then(Value::as_str)
+        .map(|s| estimate_tokens(s))
+        .unwrap_or(0);
+    let tool_calls_tokens = msg
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .map(|calls| {
+            calls
+                .iter()
+                .map(|call| {
+                    let name_tokens = call
+                        .get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(Value::as_str)
+                        .map(|s| estimate_tokens(s))
+                        .unwrap_or(0);
+                    let args_tokens = call
+                        .get("function")
+                        .and_then(|f| f.get("arguments"))
+                        .and_then(Value::as_str)
+                        .map(|s| estimate_tokens(s))
+                        .unwrap_or(0);
+                    name_tokens + args_tokens + 4
+                })
+                .sum::<u32>()
+        })
+        .unwrap_or(0);
+    overhead + content_tokens + tool_calls_tokens
+}
+
+/// Estimate total tokens across an array of chat‑completion messages.
+pub(crate) fn estimate_messages_tokens(messages: &[Value]) -> u32 {
+    messages.iter().map(|m| estimate_message_tokens(m)).sum()
+}
+
+/// Compact a chat‑completion message array in‑place when it exceeds the token budget.
+///
+/// Strategy:
+///  1. `messages[0]` (system prompt) is always kept.
+///  2. Remaining messages are grouped into *segments*: each segment starts with a
+///     non‑`tool` role message and includes all consecutive `tool` messages that follow
+///     it, so `assistant(tool_calls) + tool results` groups stay intact.
+///  3. From the **tail** (most recent), we accumulate segments until we reach the budget.
+///  4. Everything between the system message and the first kept segment is replaced with
+///     a single compaction summary system message.
+pub(crate) fn compact_chat_messages(messages: &mut Vec<Value>) {
+    let total_tokens = estimate_messages_tokens(messages);
+    if total_tokens <= HISTORY_COMPACT_TOKEN_LIMIT || messages.len() <= 3 {
+        return;
+    }
+
+    // --- Build segment boundaries (indices into `messages`) -----------------
+    // A segment starts at every non-"tool" role message after the system message.
+    let mut segment_starts: Vec<usize> = vec![1];
+    for i in 2..messages.len() {
+        let role = messages[i]
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if role != "tool" {
+            segment_starts.push(i);
+        }
+    }
+
+    // --- Budget calculation --------------------------------------------------
+    let system_tokens = estimate_message_tokens(&messages[0]);
+    let summary_reserve = 200u32;
+    let available = HISTORY_COMPACT_TOKEN_LIMIT
+        .saturating_sub(system_tokens)
+        .saturating_sub(summary_reserve);
+
+    // Walk segments from the end, keeping as many recent segments as fit.
+    let mut tail_tokens = 0u32;
+    let mut keep_from_seg = segment_starts.len();
+    for seg_idx in (0..segment_starts.len()).rev() {
+        let seg_start = segment_starts[seg_idx];
+        let seg_end = if seg_idx + 1 < segment_starts.len() {
+            segment_starts[seg_idx + 1]
+        } else {
+            messages.len()
+        };
+        let seg_tokens: u32 = messages[seg_start..seg_end]
+            .iter()
+            .map(|m| estimate_message_tokens(m))
+            .sum();
+        if tail_tokens + seg_tokens > available {
+            break;
+        }
+        tail_tokens += seg_tokens;
+        keep_from_seg = seg_idx;
+    }
+
+    if keep_from_seg == 0 {
+        return; // everything fits
+    }
+    let cut_point = segment_starts[keep_from_seg];
+    if cut_point <= 1 {
+        return;
+    }
+
+    // --- Build compaction summary -------------------------------------------
+    let dropped = &messages[1..cut_point];
+    let dropped_count = dropped.len();
+    let mut unique_tools: Vec<&str> = Vec::new();
+    for msg in dropped {
+        if let Some(calls) = msg.get("tool_calls").and_then(Value::as_array) {
+            for call in calls {
+                if let Some(name) = call
+                    .get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(Value::as_str)
+                {
+                    if !unique_tools.contains(&name) {
+                        unique_tools.push(name);
+                    }
+                }
+            }
+        }
+    }
+
+    let summary = if unique_tools.is_empty() {
+        format!(
+            "[Context compacted: {} earlier messages removed to fit context window. \
+             Recent conversation preserved below.]",
+            dropped_count
+        )
+    } else {
+        format!(
+            "[Context compacted: {} earlier messages removed. \
+             Tools previously used: {}. Recent context preserved below.]",
+            dropped_count,
+            unique_tools.join(", ")
+        )
+    };
+
+    messages.splice(
+        1..cut_point,
+        std::iter::once(json!({
+            "role": "system",
+            "content": summary,
+        })),
+    );
 }
 
 fn request_has_binary_attachment_context(request: &AgentTurnDescriptor) -> bool {
@@ -1434,5 +1587,121 @@ pub async fn execute_tool_calls(
     ExecutedToolBatch {
         executed,
         suspended,
+    }
+}
+
+#[cfg(test)]
+mod compaction_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_system(text: &str) -> Value {
+        json!({"role": "system", "content": text})
+    }
+    fn make_user(text: &str) -> Value {
+        json!({"role": "user", "content": text})
+    }
+    fn make_assistant_with_tool(text: &str, tool_name: &str) -> Value {
+        json!({
+            "role": "assistant",
+            "content": text,
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": tool_name, "arguments": "{}"}
+            }]
+        })
+    }
+    fn make_tool_result(call_id: &str, content: &str) -> Value {
+        json!({"role": "tool", "tool_call_id": call_id, "content": content})
+    }
+
+    #[test]
+    fn no_compaction_when_under_limit() {
+        let mut messages = vec![
+            make_system("system prompt"),
+            make_user("hello"),
+        ];
+        let before_len = messages.len();
+        compact_chat_messages(&mut messages);
+        assert_eq!(messages.len(), before_len);
+    }
+
+    #[test]
+    fn compaction_preserves_system_and_recent() {
+        // Build a large message array that exceeds 60k tokens.
+        // Each filler message ~250 tokens (1000 ASCII chars ÷ 4).
+        let filler = "x".repeat(1000);
+        let mut messages = vec![make_system("system")];
+        // 300 messages × 250 tokens ≈ 75,000 tokens → should trigger compaction.
+        for i in 0..300 {
+            if i % 3 == 0 {
+                messages.push(make_assistant_with_tool(&filler, "read_file"));
+            } else if i % 3 == 1 {
+                messages.push(make_tool_result("call_1", &filler));
+            } else {
+                messages.push(make_user(&filler));
+            }
+        }
+        let original_len = messages.len();
+        compact_chat_messages(&mut messages);
+
+        // Should have been compacted.
+        assert!(messages.len() < original_len);
+        // System message intact.
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "system");
+        // Second message should be the compaction summary.
+        assert_eq!(messages[1]["role"], "system");
+        let summary = messages[1]["content"].as_str().unwrap();
+        assert!(summary.contains("Context compacted"));
+        assert!(summary.contains("read_file"));
+    }
+
+    #[test]
+    fn compaction_keeps_tool_call_groups_intact() {
+        // Create messages just over the limit with clear tool-call groups.
+        let filler = "y".repeat(1000);
+        let mut messages = vec![make_system("sys")];
+        // 80 groups × ~1031 tokens/group ≈ 82k tokens → should trigger compaction.
+        for _ in 0..80 {
+            messages.push(make_assistant_with_tool(&filler, "run_shell_command"));
+            messages.push(make_tool_result("call_1", &filler));
+            messages.push(make_tool_result("call_1", &filler));
+            messages.push(make_user("ok"));
+            messages.push(make_user(&filler));
+        }
+        compact_chat_messages(&mut messages);
+
+        // After compaction, no "tool" message should appear right after the
+        // compaction summary (that would mean we split a group).
+        if messages.len() > 2 {
+            let after_summary = &messages[2];
+            let role = after_summary["role"].as_str().unwrap_or("");
+            assert_ne!(role, "tool", "tool message should not follow compaction summary");
+        }
+    }
+
+    #[test]
+    fn estimate_tokens_cjk_vs_ascii() {
+        let ascii = "hello world"; // 11 chars → ceil(11/4) = 3
+        assert_eq!(estimate_tokens(ascii), 3);
+
+        let cjk = "你好世界"; // 4 CJK chars → (4*3 + 0) / 4 = 3
+        assert_eq!(estimate_tokens(cjk), 3);
+
+        let mixed = "hello你好"; // 5 ascii + 2 CJK → (2*3 + 5) / 4 = ceil(11/4) = 3
+        assert_eq!(estimate_tokens(mixed), 3);
+    }
+
+    #[test]
+    fn estimate_messages_tokens_sums_correctly() {
+        let messages = vec![
+            make_system("hello"),
+            make_user("world"),
+        ];
+        let total = estimate_messages_tokens(&messages);
+        // Each: 4 overhead + estimate_tokens(5 chars) = 4 + 2 = 6
+        assert_eq!(total, 12);
     }
 }

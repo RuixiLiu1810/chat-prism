@@ -142,20 +142,12 @@ const StreamingIndicator: FC = memo(() => {
   }, []);
 
   return (
-    <div className="flex items-center gap-1.5 px-1 py-1.5 text-muted-foreground">
-      <div className="flex gap-0.5">
-        <span
-          className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50"
-          style={{ animationDelay: "0ms" }}
-        />
-        <span
-          className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50"
-          style={{ animationDelay: "150ms" }}
-        />
-        <span
-          className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50"
-          style={{ animationDelay: "300ms" }}
-        />
+    <div className="flex items-center gap-2 px-1 py-1.5 text-muted-foreground">
+      <div className="flex h-4 items-end gap-[3px]">
+        <span className="inline-block w-[3px] animate-pulse rounded-full bg-primary/60" style={{ height: '40%', animationDelay: '0ms', animationDuration: '1.2s' }} />
+        <span className="inline-block w-[3px] animate-pulse rounded-full bg-primary/60" style={{ height: '70%', animationDelay: '200ms', animationDuration: '1.2s' }} />
+        <span className="inline-block w-[3px] animate-pulse rounded-full bg-primary/60" style={{ height: '100%', animationDelay: '400ms', animationDuration: '1.2s' }} />
+        <span className="inline-block w-[3px] animate-pulse rounded-full bg-primary/60" style={{ height: '55%', animationDelay: '600ms', animationDuration: '1.2s' }} />
       </div>
       <span className="text-sm">
         Thinking...
@@ -255,7 +247,7 @@ export const ChatMessages: FC = () => {
     if (!viewportRef.current) return;
     const el = viewportRef.current;
     const isAtBottom =
-      Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 50;
+      Math.abs(el.scrollHeight - el.scrollTop - el.clientHeight) < 150;
     if (!isAtBottom) {
       userHasScrolledRef.current = true;
       shouldAutoScrollRef.current = false;
@@ -279,6 +271,7 @@ export const ChatMessages: FC = () => {
 
       {displayMessages.map((msg, idx) => {
         const sourceIndex = findSourceIndex(messages, msg);
+        const isLastMessage = idx === displayMessages.length - 1;
         return (
           <MessageBubble
             key={idx}
@@ -288,6 +281,7 @@ export const ChatMessages: FC = () => {
             toolResultMap={toolResultMap}
             isStreaming={isStreaming}
             debugEnabled={debugEnabled}
+            isLastMessage={isLastMessage && !isStreaming}
           />
         );
       })}
@@ -306,6 +300,7 @@ const MessageBubble: FC<{
   toolResultMap: Map<string, ContentBlock>;
   isStreaming: boolean;
   debugEnabled: boolean;
+  isLastMessage: boolean;
 }> = memo(
   ({
     message,
@@ -314,9 +309,10 @@ const MessageBubble: FC<{
     toolResultMap,
     isStreaming,
     debugEnabled,
+    isLastMessage,
   }) => {
     if (message.type === "user") {
-      return <UserMessage message={message} sourceIndex={sourceIndex} />;
+      return <UserMessage message={message} sourceIndex={sourceIndex} isLastMessage={isLastMessage} />;
     }
     if (message.type === "assistant") {
       return (
@@ -327,11 +323,12 @@ const MessageBubble: FC<{
           toolResultMap={toolResultMap}
           isStreaming={isStreaming}
           debugEnabled={debugEnabled}
+          isLastMessage={isLastMessage}
         />
       );
     }
     if (message.type === "result") {
-      return <ResultMessage message={message} sourceIndex={sourceIndex} />;
+      return <ResultMessage message={message} sourceIndex={sourceIndex} isLastMessage={isLastMessage} />;
     }
     return null;
   },
@@ -339,9 +336,10 @@ const MessageBubble: FC<{
 
 // ─── User Message ───
 
-const UserMessage: FC<{ message: AgentStreamMessage; sourceIndex: number }> = ({
+const UserMessage: FC<{ message: AgentStreamMessage; sourceIndex: number; isLastMessage: boolean }> = ({
   message,
   sourceIndex,
+  isLastMessage,
 }) => {
   const rawContent = message.message?.content;
   const textContent = Array.isArray(rawContent)
@@ -403,7 +401,7 @@ const UserMessage: FC<{ message: AgentStreamMessage; sourceIndex: number }> = ({
         <span className="text-muted-foreground">{prompt}</span>
       </div>
       <div className="mt-1 flex w-full max-w-[85%] justify-end">
-        <MessageActions message={message} sourceIndex={sourceIndex} />
+        <MessageActions message={message} sourceIndex={sourceIndex} isLastMessage={isLastMessage} />
       </div>
     </div>
   );
@@ -448,7 +446,7 @@ const UserMessage: FC<{ message: AgentStreamMessage; sourceIndex: number }> = ({
 
   return (
     <div className="group flex w-full flex-col items-end py-1.5">
-      <div className="max-w-[85%] rounded-xl bg-muted px-3 py-1.5 text-foreground text-sm">
+      <div className="max-w-[85%] rounded-xl bg-muted px-3 py-1.5 text-foreground text-sm" style={{ overflowWrap: 'anywhere' }}>
         {contextLabel && (
           <span className="mb-1 inline-flex items-center rounded-md bg-background/60 px-1.5 py-0.5 font-mono text-muted-foreground text-xs">
             {contextLabel}
@@ -461,7 +459,7 @@ const UserMessage: FC<{ message: AgentStreamMessage; sourceIndex: number }> = ({
         />
       </div>
       <div className="mt-1 flex w-full max-w-[85%] justify-end">
-        <MessageActions message={message} sourceIndex={sourceIndex} />
+        <MessageActions message={message} sourceIndex={sourceIndex} isLastMessage={isLastMessage} />
       </div>
     </div>
   );
@@ -476,6 +474,7 @@ const AssistantMessage: FC<{
   toolResultMap: Map<string, ContentBlock>;
   isStreaming: boolean;
   debugEnabled: boolean;
+  isLastMessage: boolean;
 }> = ({
   message,
   sourceIndex,
@@ -483,6 +482,7 @@ const AssistantMessage: FC<{
   toolResultMap,
   isStreaming,
   debugEnabled,
+  isLastMessage,
 }) => {
   const content = message.message?.content;
   if (!Array.isArray(content) || content.length === 0) return null;
@@ -504,7 +504,7 @@ const AssistantMessage: FC<{
 
   return (
     <div className="w-full py-1.5 group">
-      <div className="px-1 text-foreground text-sm leading-relaxed">
+      <div className="min-w-0 px-1 text-foreground text-sm leading-relaxed" style={{ overflowWrap: 'anywhere' }}>
         {content.map((block, idx) => {
           if (block.type === "thinking" && block.thinking) {
             return (
@@ -565,6 +565,7 @@ const AssistantMessage: FC<{
             message={message}
             sourceIndex={sourceIndex}
             canRetry={canRetry}
+            isLastMessage={isLastMessage}
           />
         </div>
       </div>
@@ -574,9 +575,10 @@ const AssistantMessage: FC<{
 
 // ─── Result Message ───
 
-const ResultMessage: FC<{ message: AgentStreamMessage; sourceIndex: number }> = ({
+const ResultMessage: FC<{ message: AgentStreamMessage; sourceIndex: number; isLastMessage: boolean }> = ({
   message,
   sourceIndex,
+  isLastMessage,
 }) => {
   const isError = message.is_error || message.subtype === "error";
   const resultText = message.result;
@@ -585,7 +587,7 @@ const ResultMessage: FC<{ message: AgentStreamMessage; sourceIndex: number }> = 
 
   return (
     <div className="w-full py-1.5 group">
-      <div className="px-1 text-foreground text-sm leading-relaxed">
+      <div className="min-w-0 px-1 text-foreground text-sm leading-relaxed" style={{ overflowWrap: 'anywhere' }}>
         {isError ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive text-sm">
             {resultText}
@@ -601,6 +603,7 @@ const ResultMessage: FC<{ message: AgentStreamMessage; sourceIndex: number }> = 
             message={message}
             sourceIndex={sourceIndex}
             canRetry={false}
+            isLastMessage={isLastMessage}
           />
         </div>
       </div>

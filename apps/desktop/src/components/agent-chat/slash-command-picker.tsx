@@ -1,6 +1,7 @@
 import {
   type FC,
   type RefObject,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -406,9 +407,11 @@ export const SlashCommandPicker: FC<SlashCommandPickerProps> = ({
     return counts;
   }, [commands]);
 
+  const deferredQuery = useDeferredValue(query);
+
   // Filtered results: unified search or tab-scoped
   const filtered = useMemo(() => {
-    const q = query.toLowerCase();
+    const q = deferredQuery.toLowerCase();
 
     if (isSearching) {
       return filterAndSort(commands, q);
@@ -416,7 +419,7 @@ export const SlashCommandPicker: FC<SlashCommandPickerProps> = ({
 
     const byTab = commands.filter((cmd) => scopeToTab(cmd.scope) === activeTab);
     return byTab;
-  }, [query, commands, activeTab, isSearching]);
+  }, [deferredQuery, commands, activeTab, isSearching]);
 
   // The currently highlighted command
   const selectedCommand = filtered.length > 0 ? filtered[selectedIndex] : null;

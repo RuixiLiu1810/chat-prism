@@ -1,5 +1,6 @@
 import { type FC, useState } from "react";
 import { CheckCircle2Icon, RefreshCwIcon, WorkflowIcon } from "lucide-react";
+import { toast } from "sonner";
 import {
   type PendingWorkflowCheckpointState,
   useAgentChatStore,
@@ -27,7 +28,8 @@ export const WorkflowCheckpointCard: FC<WorkflowCheckpointCardProps> = ({
           ? "Checkpoint approved. You can continue with the next stage."
           : "Checkpoint rejected. Continue this stage with requested adjustments.",
       );
-    } finally {
+    } catch (err) {
+      toast.error("Checkpoint action failed");
       setPending(null);
     }
   };

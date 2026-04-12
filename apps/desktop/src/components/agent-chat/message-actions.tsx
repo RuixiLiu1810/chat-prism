@@ -7,6 +7,7 @@ interface MessageActionsProps {
   message: AgentStreamMessage;
   sourceIndex?: number;
   canRetry?: boolean;
+  isLastMessage?: boolean;
   className?: string;
 }
 
@@ -50,12 +51,14 @@ export const MessageActions: FC<MessageActionsProps> = ({
   message,
   sourceIndex,
   canRetry = true,
+  isLastMessage = false,
   className = "",
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState(extractMessageText(message));
   const sendPrompt = useAgentChatStore((s) => s.sendPrompt);
   const messages = useAgentChatStore((s) => s.messages);
+  const isStreaming = useAgentChatStore((s) => s.isStreaming);
   const text = useMemo(() => extractMessageText(message), [message]);
 
   useEffect(() => {
@@ -114,6 +117,10 @@ export const MessageActions: FC<MessageActionsProps> = ({
   }, [editedText, sendPrompt]);
 
   const handleRetry = useCallback(async () => {
+    if (isStreaming) {
+      toast.error("Please wait for the current response to finish");
+      return;
+    }
     try {
       if (!messages || resolvedIndex < 0 || resolvedIndex >= messages.length) {
         toast.error("Cannot find message to retry");
@@ -137,7 +144,7 @@ export const MessageActions: FC<MessageActionsProps> = ({
     } catch (err) {
       toast.error("Failed to retry");
     }
-  }, [messages, resolvedIndex, sendPrompt]);
+  }, [messages, resolvedIndex, sendPrompt, isStreaming]);
 
   const showCopy = Boolean(text);
   const showEdit = message.type === "user";
@@ -181,7 +188,7 @@ export const MessageActions: FC<MessageActionsProps> = ({
 
   return (
     <div
-      className={`inline-flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${className}`}
+      className={`inline-flex items-center gap-0.5 transition-opacity ${isLastMessage ? "opacity-100" : "opacity-100 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"} ${className}`}
     >
       {showCopy ? (
         <button

@@ -249,7 +249,7 @@ const CodeBlock: FC<{ language: string; code: string }> = ({
 
       {/* Running spinner */}
       {runState.status === "running" && (
-        <div className="mt-1 flex items-center gap-2 rounded-lg border border-border bg-[#1e1e2e] px-3 py-2 text-sm">
+        <div className="mt-1 flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-sm">
           <LoaderIcon className="size-3.5 animate-spin text-muted-foreground" />
           <span className="font-mono text-muted-foreground text-xs">
             Running...
@@ -285,13 +285,14 @@ const CommandOutput: FC<{
   stderr: string;
 }> = ({ exitCode, stdout, stderr }) => {
   const [expanded, setExpanded] = useState(true);
+  const [showFull, setShowFull] = useState(false);
   const success = exitCode === 0;
   const output = (stdout + (stderr ? `\n${stderr}` : "")).trim();
-  const truncated =
-    output.length > 2000 ? `${output.slice(0, 2000)}\n...` : output;
+  const isTruncated = output.length > 2000;
+  const displayOutput = showFull || !isTruncated ? output : `${output.slice(0, 2000)}`;
 
   return (
-    <div className="mt-1 rounded-lg border border-border bg-[#1e1e2e] text-sm">
+    <div className="mt-1 rounded-lg border border-border bg-muted text-sm">
       <button
         type="button"
         className="flex w-full items-center gap-2 px-3 py-2"
@@ -303,23 +304,41 @@ const CommandOutput: FC<{
           <XIcon className="size-3.5 text-red-400" />
         )}
         <span
-          className={`font-mono text-xs ${success ? "text-green-300" : "text-red-300"}`}
+          className={`font-mono text-xs ${success ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`}
         >
           {success ? "Command completed" : `Exited with code ${exitCode}`}
         </span>
         <span className="ml-auto">
           {expanded ? (
-            <ChevronDownIcon className="size-3.5 text-gray-500" />
+            <ChevronDownIcon className="size-3.5 text-muted-foreground" />
           ) : (
-            <ChevronRightIcon className="size-3.5 text-gray-500" />
+            <ChevronRightIcon className="size-3.5 text-muted-foreground" />
           )}
         </span>
       </button>
-      {expanded && truncated && (
-        <div className="max-h-40 overflow-auto border-border/50 border-t px-3 py-2">
-          <pre className="whitespace-pre-wrap font-mono text-gray-300 text-xs">
-            {truncated}
+      {expanded && displayOutput && (
+        <div className="overflow-auto border-border/50 border-t px-3 py-2" style={{ maxHeight: showFull ? undefined : 320 }}>
+          <pre className="whitespace-pre-wrap font-mono text-foreground/80 text-xs">
+            {displayOutput}
           </pre>
+          {isTruncated && !showFull && (
+            <button
+              type="button"
+              className="mt-1 font-medium text-muted-foreground text-xs hover:text-foreground"
+              onClick={(e) => { e.stopPropagation(); setShowFull(true); }}
+            >
+              ↕ Show full output ({output.length.toLocaleString()} chars)
+            </button>
+          )}
+          {isTruncated && showFull && (
+            <button
+              type="button"
+              className="mt-1 font-medium text-muted-foreground text-xs hover:text-foreground"
+              onClick={(e) => { e.stopPropagation(); setShowFull(false); }}
+            >
+              ↕ Collapse output
+            </button>
+          )}
         </div>
       )}
     </div>

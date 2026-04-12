@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HistoryIcon, PlusIcon, CheckIcon, Loader2Icon } from "lucide-react";
+import { toast } from "sonner";
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -110,6 +111,7 @@ export function SessionSelector() {
       }
     } catch (err) {
       log.error("Failed to load sessions", { error: String(err) });
+      toast.error("Failed to load sessions");
       setSessions([]);
     } finally {
       setIsLoading(false);

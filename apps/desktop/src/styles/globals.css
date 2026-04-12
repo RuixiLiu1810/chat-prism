@@ -189,3 +189,8 @@
   pointer-events: auto;
   cursor: pointer;
 }
+
+/* Ensure empty contentEditable spans always generate a line box for proper caret positioning */
+[contenteditable]:empty::after {
+  content: '\200B';
+}

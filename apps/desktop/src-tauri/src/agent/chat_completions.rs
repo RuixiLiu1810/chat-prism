@@ -18,8 +18,9 @@ use super::tools::{
     default_tool_specs, is_document_tool_name, to_chat_completions_tool_schema, AgentToolCall,
 };
 use super::turn_engine::{
-    emit_error, emit_status, emit_text_delta, execute_tool_calls, should_surface_assistant_text,
-    tool_result_feedback_for_model, tool_result_has_invalid_arguments_error, TurnBudget,
+    compact_chat_messages, emit_error, emit_status, emit_text_delta, execute_tool_calls,
+    should_surface_assistant_text, tool_result_feedback_for_model,
+    tool_result_has_invalid_arguments_error, TurnBudget,
 };
 use super::{
     agent_instructions_for_request, max_rounds_for_task, resolve_turn_profile, tool_choice_for_task,
@@ -870,6 +871,7 @@ pub async fn run_turn_loop(
         );
     }
     let mut next_messages = transcript_to_chat_messages(&instructions, request, history);
+    compact_chat_messages(&mut next_messages);
     let turn_started_at = Instant::now();
     let mut doc_tool_rounds = 0u32;
     let mut doc_tool_calls = 0u32;
@@ -1019,6 +1021,7 @@ pub async fn run_turn_loop(
         }
 
         next_messages.extend(tool_results_messages);
+        compact_chat_messages(&mut next_messages);
         if invalid_tool_arguments_detected {
             next_messages.push(json!({
                 "role": "system",
@@ -1269,6 +1272,7 @@ async fn run_turn_loop_silent(
         );
     }
     let mut next_messages = transcript_to_chat_messages(&instructions, request, history);
+    compact_chat_messages(&mut next_messages);
     let mut budget = TurnBudget::new(
         max_rounds_for_task(&resolved_profile),
         sampling_profile_params(
@@ -1348,6 +1352,7 @@ async fn run_turn_loop_silent(
         }
 
         next_messages.extend(tool_results_messages);
+        compact_chat_messages(&mut next_messages);
         if invalid_tool_arguments_detected {
             next_messages.push(json!({
                 "role": "system",

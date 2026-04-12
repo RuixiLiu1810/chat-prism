@@ -5,7 +5,14 @@ import {
   FileEditIcon,
   FileOutputIcon,
   TerminalIcon,
+  XIcon,
 } from "lucide-react";
+import { toast } from "sonner";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   useAgentChatStore,
   type PendingApprovalState,
@@ -188,75 +195,75 @@ export const ApprovalCard: FC<ApprovalCardProps> = ({ approval }) => {
       if (shouldContinue) {
         await continueAfterApproval(approval.toolName, approval.targetPath ?? undefined);
       }
-    } finally {
+    } catch (err) {
+      toast.error("Approval action failed");
       setPending(null);
     }
   };
 
   return (
-    <div className="mx-3 mb-2 rounded-xl border border-amber-500/35 bg-amber-500/8 px-3 py-3">
-      <div className="flex items-start gap-2">
-        <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-200">
-          {approval.phase === "review_ready" ? (
-            <CheckCircle2Icon className="size-4" />
-          ) : (
-            <ClockIcon className="size-4" />
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium uppercase tracking-wide text-amber-700 dark:text-amber-200">
-              {approval.phase === "review_ready" ? "Review Ready" : "Pending Approval"}
-            </span>
-            <span>{copy.contextLabel}</span>
-          </div>
-          <div className="mt-1 flex items-start gap-2">
-            <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-            <div className="min-w-0">
-              <div className="font-medium text-sm text-foreground">
-                {copy.question}
-              </div>
-              {approval.targetPath ? (
-                <code className="mt-1 inline-block rounded bg-background/80 px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                  {truncate(approval.targetPath, 140)}
-                </code>
-              ) : null}
-              <div className="mt-2 text-muted-foreground text-xs">
-                {approval.message}
-              </div>
-              <div className="mt-1 text-muted-foreground/80 text-xs">
-                {copy.nextStep}
-              </div>
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                <ApprovalButton
-                  label={pending === "allow_once" ? "Allowing..." : copy.allowOnceLabel}
-                  onClick={() => void handleDecision("allow_once")}
-                  disabled={pending !== null}
-                />
-                <ApprovalButton
-                  label={
-                    pending === "allow_session"
-                      ? "Allowing..."
-                      : copy.allowSessionLabel
-                  }
-                  onClick={() => void handleDecision("allow_session")}
-                  disabled={pending !== null}
-                />
-                <ApprovalButton
-                  label={pending === "deny_session" ? "Saving..." : copy.denySessionLabel}
-                  onClick={() => void handleDecision("deny_session")}
-                  disabled={pending !== null}
-                />
-              </div>
-              {doneLabel ? (
-                <div className="mt-2 text-muted-foreground text-xs">
-                  {doneLabel}
-                </div>
-              ) : null}
+    <div className="mx-3 mb-2 rounded-xl border border-amber-500/35 bg-amber-500/8 px-3 py-2">
+      {/* Row 1: Icon + summary (with tooltip for details) + status badge */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="flex items-center gap-2">
+            <div className="flex size-6 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-200">
+              {approval.phase === "review_ready" ? (
+                <CheckCircle2Icon className="size-3.5" />
+              ) : (
+                <ClockIcon className="size-3.5" />
+              )}
             </div>
+            <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 flex-1 truncate font-medium text-foreground text-sm">
+              {copy.contextLabel}
+              {approval.targetPath ? (
+                <>
+                  {" "}
+                  <code className="rounded bg-background/80 px-1 py-0.5 text-[11px] text-muted-foreground">
+                    {truncate(approval.targetPath, 60)}
+                  </code>
+                </>
+              ) : null}
+            </span>
           </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-sm">
+          <p className="font-medium">{copy.question}</p>
+          {approval.message ? <p className="mt-1 opacity-80">{approval.message}</p> : null}
+          <p className="mt-1 opacity-70">{copy.nextStep}</p>
+        </TooltipContent>
+      </Tooltip>
+
+      {/* Row 2: Action buttons or result */}
+      {doneLabel ? (
+        <div className="mt-1.5 flex items-center gap-1.5 pl-8 text-muted-foreground text-xs">
+          <CheckCircle2Icon className="size-3 text-green-500" />
+          <span>{doneLabel}</span>
         </div>
-      </div>
+      ) : (
+        <div className="mt-1.5 flex flex-wrap gap-1.5 pl-8">
+          <ApprovalButton
+            label={pending === "allow_once" ? "Allowing..." : copy.allowOnceLabel}
+            onClick={() => void handleDecision("allow_once")}
+            disabled={pending !== null}
+          />
+          <ApprovalButton
+            label={
+              pending === "allow_session"
+                ? "Allowing..."
+                : copy.allowSessionLabel
+            }
+            onClick={() => void handleDecision("allow_session")}
+            disabled={pending !== null}
+          />
+          <ApprovalButton
+            label={pending === "deny_session" ? "Saving..." : copy.denySessionLabel}
+            onClick={() => void handleDecision("deny_session")}
+            disabled={pending !== null}
+          />
+        </div>
+      )}
     </div>
   );
 };

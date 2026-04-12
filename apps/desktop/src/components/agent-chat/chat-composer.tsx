@@ -86,7 +86,46 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
   const setSelectedModel = useAgentChatStore((s) => s.setSelectedModel);
   const activeTabId = useAgentChatStore((s) => s.activeTabId);
   const [input, setInput] = useState("");
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
+
+  // ── contenteditable helpers ──────────────────────────────────────────────
+  /** Get plain text from the contenteditable div */
+  const getEditorText = useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return "";
+    return el.innerText.replace(/\n$/, "");
+  }, []);
+
+  /** Move cursor to end of contenteditable */
+  const moveCursorToEnd = useCallback((el: HTMLElement) => {
+    const range = document.createRange();
+    const sel = window.getSelection();
+    range.selectNodeContents(el);
+    range.collapse(false);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, []);
+
+  /** Programmatically set contenteditable text and move cursor to end */
+  const setEditorContent = useCallback((text: string) => {
+    const el = editorRef.current;
+    if (!el) return;
+    el.innerText = text;
+    if (text) moveCursorToEnd(el);
+  }, [moveCursorToEnd]);
+
+  /** Get text content before the cursor */
+  const getTextBeforeCursor = useCallback(() => {
+    const el = editorRef.current;
+    if (!el) return "";
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return "";
+    const range = sel.getRangeAt(0);
+    const pre = document.createRange();
+    pre.selectNodeContents(el);
+    pre.setEnd(range.startContainer, range.startOffset);
+    return pre.toString();
+  }, []);
 
   // Model picker state
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
@@ -165,12 +204,14 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
       .getState()
       .tabs.find((t) => t.id === activeTabId);
     const draft = tab?.draft;
-    setInput(draft?.input ?? "");
+    const newInput = draft?.input ?? "";
+    setInput(newInput);
     setPinnedContexts(draft?.pinnedContexts ?? []);
     setMentionQuery(null);
     setSlashQuery(null);
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
+    // Sync contenteditable DOM to restored draft
+    if (editorRef.current) {
+      editorRef.current.innerText = newInput;
     }
   }, [activeTabId]);
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
@@ -190,11 +231,11 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
     (s) => s.consumePendingAttachments,
   );
 
-  // Focus textarea when the drawer opens
+  // Focus editor when the drawer opens
   const prevOpenRef = useRef(false);
   useEffect(() => {
     if (isOpen && !prevOpenRef.current) {
-      setTimeout(() => textareaRef.current?.focus(), 0);
+      setTimeout(() => editorRef.current?.focus(), 0);
     }
     prevOpenRef.current = !!isOpen;
   }, [isOpen]);
@@ -208,8 +249,7 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
       const unique = attachments.filter((a) => !existingLabels.has(a.label));
       return [...prev, ...unique];
     });
-    // Focus textarea so user can type immediately
-    setTimeout(() => textareaRef.current?.focus(), 0);
+    setTimeout(() => editorRef.current?.focus(), 0);
   }, [pendingAttachments, consumePendingAttachments]);
 
   const currentContextLabel = useMemo(() => {
@@ -276,50 +316,38 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
 
   const selectMention = useCallback(
     async (file: ProjectFile) => {
-      // Replace @query with empty and pin the file as context
-      const textarea = textareaRef.current;
-      if (!textarea) return;
-      const cursorPos = textarea.selectionStart;
-      // Find the @ position before cursor
-      const textBefore = input.slice(0, cursorPos);
+      const el = editorRef.current;
+      if (!el) return;
+      const textBefore = getTextBeforeCursor();
       const atIndex = textBefore.lastIndexOf("@");
       if (atIndex === -1) return;
-      const newInput = input.slice(0, atIndex) + input.slice(cursorPos);
-      setInput(newInput);
+      const fullText = getEditorText();
+      const cursorPos = textBefore.length;
+      const newText = fullText.slice(0, atIndex) + fullText.slice(cursorPos);
+      el.innerText = newText;
+      setInput(newText);
       setMentionQuery(null);
-
       // Pin the whole file as context
       const pinnedContext = await buildPromptContextForProjectFile(file);
       setPinnedContexts((prev) => [...prev, pinnedContext]);
-
-      // Refocus textarea
-      setTimeout(() => textarea.focus(), 0);
+      el.focus();
     },
-    [input],
+    [getEditorText, getTextBeforeCursor],
   );
 
   const selectSlashCommand = useCallback((command: SlashCommand) => {
-    // Insert command syntax into input (opcode-style)
-    const newInput = command.accepts_arguments
-      ? `${command.full_command} `
-      : `${command.full_command} `;
-
+    const newInput = `${command.full_command} `;
     setInput(newInput);
     setSlashQuery(null);
     slashSelectedRef.current = true;
-
-    // Refocus and move cursor to end
     setTimeout(() => {
-      const textarea = textareaRef.current;
-      if (textarea) {
-        textarea.focus();
-        textarea.selectionStart = textarea.selectionEnd = newInput.length;
-        // Auto-resize
-        textarea.style.height = "auto";
-        textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`;
+      const el = editorRef.current;
+      if (el) {
+        setEditorContent(newInput);
+        el.focus();
       }
     }, 0);
-  }, []);
+  }, [setEditorContent]);
 
   // Handle file drops — guard against duplicate calls from stale HMR listeners
   const isProcessingDropRef = useRef(false);
@@ -351,7 +379,7 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
         const unique = newContexts.filter((c) => !existingLabels.has(c.label));
         return [...prev, ...unique];
       });
-      setTimeout(() => textareaRef.current?.focus(), 0);
+      setTimeout(() => editorRef.current?.focus(), 0);
     }
   }, []);
   const normalizePath = (p: string) =>
@@ -521,10 +549,19 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
 
   // Handle clipboard paste — detect files (screenshots, images) and save to attachments/
   const handlePaste = useCallback(
-    async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    async (e: React.ClipboardEvent<HTMLElement>) => {
       const clipboardFiles = e.clipboardData?.files;
-      if (!clipboardFiles || clipboardFiles.length === 0 || !projectRoot)
+      if (!clipboardFiles || clipboardFiles.length === 0 || !projectRoot) {
+        // No files — in contentEditable, intercept to paste plain text only
+        e.preventDefault();
+        const text = e.clipboardData?.getData('text/plain') ?? '';
+        if (text) {
+          document.execCommand('insertText', false, text);
+          const el = editorRef.current;
+          if (el) setInput(el.innerText.replace(/\n$/, ''));
+        }
         return;
+      }
 
       // Check if there are actual file items (not just text)
       const fileItems = Array.from(clipboardFiles);
@@ -675,16 +712,15 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
     } else {
       await sendPrompt(finalPrompt);
     }
-    // Reset textarea height
-    if (textareaRef.current) {
-      textareaRef.current.style.height = "auto";
+    // Clear contenteditable and pinned contexts after send
+    if (editorRef.current) {
+      editorRef.current.innerText = "";
     }
-    // Clear pinned contexts after send
     setPinnedContexts([]);
   }, [input, isStreaming, sendPrompt, pinnedContexts, slashCommands]);
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    (e: React.KeyboardEvent<HTMLElement>) => {
       // Slash command picker is open — let the picker handle keyboard events
       // (it uses window.addEventListener for ArrowUp/Down, Enter, Tab, Escape)
       if (slashQuery !== null) {
@@ -747,14 +783,14 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
   );
 
   const handleInput = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-      const value = e.target.value;
+    (e: React.FormEvent<HTMLElement>) => {
+      const el = e.currentTarget;
+      const value = el.innerText.replace(/\n$/, "");
       setInput(value);
 
       // Detect / slash command trigger — only at the very start of input
       const slashMatch = value.match(/^\/(\S*)$/);
       if (slashMatch) {
-        // Typing /query with no space yet — open picker
         slashSelectedRef.current = false;
         setSlashQuery(slashMatch[1]);
         setMentionQuery(null);
@@ -764,11 +800,9 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
         setSlashQuery(null);
       }
 
-      // Detect @ mention trigger (only when not in slash command mode)
+      // Detect @ mention trigger via Selection API
       if (!value.startsWith("/")) {
-        const cursorPos = e.target.selectionStart;
-        const textBefore = value.slice(0, cursorPos);
-        // Match @ at start of input or after a space
+        const textBefore = getTextBeforeCursor();
         const atMatch = textBefore.match(/(?:^|[\s])@([^\s]*)$/);
         if (atMatch) {
           setMentionQuery(atMatch[1]);
@@ -776,13 +810,8 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
           setMentionQuery(null);
         }
       }
-
-      // Auto-resize
-      const el = e.target;
-      el.style.height = "auto";
-      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
     },
-    [],
+    [getTextBeforeCursor],
   );
 
   // Scroll active mention into view
@@ -934,108 +963,125 @@ export const ChatComposer: FC<{ isOpen?: boolean }> = ({ isOpen }) => {
           "flex w-full flex-col rounded-2xl border border-input bg-muted/30 transition-colors focus-within:border-ring focus-within:bg-background",
         )}
       >
-        {/* Pinned context chips */}
-        {pinnedContexts.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 px-4 pt-3 pb-0">
-            {pinnedContexts.map((ctx, i) =>
-              ctx.imageDataUrl ? (
-                <div
-                  key={`${ctx.label}-${i}`}
-                  className="group relative overflow-hidden rounded-lg border border-border bg-muted"
-                >
-                  <img
-                    src={ctx.imageDataUrl}
-                    alt={ctx.label}
-                    className="block h-16 w-auto object-contain"
-                  />
-                  <button
-                    aria-label="Remove attachment"
-                    onClick={() =>
-                      setPinnedContexts((prev) =>
-                        prev.filter((_, idx) => idx !== i),
-                      )
-                    }
-                    className="absolute top-0.5 right-0.5 rounded-full bg-background/80 p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+        {/* Unified content area: chips and text share a single inline flow */}
+        {/* Content area — single block container, everything flows inline */}
+        <div
+          className="relative cursor-text overflow-y-auto px-4 pt-3 pb-1 text-sm leading-6"
+          style={{ maxHeight: 160, minHeight: '2.5rem', overflowWrap: 'anywhere' as const }}
+          onClick={() => editorRef.current?.focus()}
+        >
+          {/* Image attachments as a block row above the inline flow */}
+          {pinnedContexts.some((c) => c.imageDataUrl) && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {pinnedContexts.map((ctx, i) =>
+                ctx.imageDataUrl ? (
+                  <div
+                    key={`img-${ctx.label}-${i}`}
+                    className="group relative overflow-hidden rounded-lg border border-border bg-muted"
                   >
-                    <XIcon className="size-3" />
-                  </button>
-                </div>
-              ) : (
-                <span
-                  key={`${ctx.label}-${i}`}
-                  className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 font-mono text-muted-foreground text-xs"
+                    <img
+                      src={ctx.imageDataUrl}
+                      alt={ctx.label}
+                      className="block h-16 w-auto object-contain"
+                    />
+                    <button
+                      aria-label="Remove attachment"
+                      onClick={(e) => { e.stopPropagation(); setPinnedContexts((prev) => prev.filter((_, idx) => idx !== i)); }}
+                      className="absolute top-0.5 right-0.5 rounded-full bg-background/80 p-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                    >
+                      <XIcon className="size-3" />
+                    </button>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          )}
+
+          {/* Placeholder — absolutely positioned, visible only when no text & no text chips */}
+          {!input && pinnedContexts.every((c) => !!c.imageDataUrl) && (
+            <span className="pointer-events-none absolute top-3 left-4 select-none text-muted-foreground">
+              Ask me anything (/ for commands, @ to mention)
+            </span>
+          )}
+
+          {/* Non-image chips — inline-flex elements in the normal flow */}
+          {pinnedContexts.map((ctx, i) =>
+            ctx.imageDataUrl ? null : (
+              <span
+                key={`${ctx.label}-${i}`}
+                contentEditable={false}
+                className="mb-0.5 mr-1.5 inline-flex items-center gap-1 rounded-md bg-muted px-2 py-0.5 align-baseline font-mono text-muted-foreground text-xs"
+              >
+                {ctx.label}
+                <button
+                  aria-label="Remove context"
+                  onClick={(e) => { e.stopPropagation(); setPinnedContexts((prev) => prev.filter((_, idx) => idx !== i)); }}
+                  className="ml-0.5 rounded-sm p-0.5 transition-colors hover:bg-muted-foreground/20"
                 >
-                  {ctx.label}
-                  <button
-                    aria-label="Remove context"
-                    onClick={() =>
-                      setPinnedContexts((prev) =>
-                        prev.filter((_, idx) => idx !== i),
-                      )
-                    }
-                    className="ml-0.5 rounded-sm p-0.5 transition-colors hover:bg-muted-foreground/20"
-                  >
-                    <XIcon className="size-3" />
-                  </button>
-                </span>
-              ),
+                  <XIcon className="size-3" />
+                </button>
+              </span>
+            ),
+          )}
+
+          {/* Editable span — display:inline so text shares the same line boxes as the chips.
+              When text wraps, it wraps at the block container's left edge, flowing below chips. */}
+          <span
+            ref={editorRef as React.RefObject<HTMLSpanElement>}
+            contentEditable
+            suppressContentEditableWarning
+            onInput={handleInput}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            role="textbox"
+            className="outline-none break-all"
+          />
+        </div>
+
+        {/* Bottom controls — compact layout with aligned heights */}
+        <div className="flex items-center gap-2 px-4 py-2 border-t border-border/40">
+          {/* Model & settings selector */}
+          <button
+            ref={modelButtonRef}
+            type="button"
+            onClick={() => setModelPickerOpen((v) => !v)}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground h-7 whitespace-nowrap"
+          >
+            <span>
+              {selectedModel === "haiku" ? "Fast" : "Default"}
+            </span>
+            <ChevronDownIcon className="size-3" />
+          </button>
+
+          {/* Send/Stop button — aligned right */}
+          <div className="ml-auto">
+            {isStreaming ? (
+              <TooltipIconButton
+                tooltip="Stop"
+                side="top"
+                variant="secondary"
+                size="icon"
+                className="size-7 rounded-full"
+                onClick={cancelExecution}
+              >
+                <SquareIcon className="size-3 fill-current" />
+              </TooltipIconButton>
+            ) : (
+              <TooltipIconButton
+                tooltip="Send"
+                side="top"
+                variant="default"
+                size="icon"
+                className="size-7 rounded-full"
+                onClick={() => {
+                  void handleSend();
+                }}
+                disabled={!input.trim()}
+              >
+                <ArrowUpIcon className="size-3.5" />
+              </TooltipIconButton>
             )}
           </div>
-        )}
-
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          placeholder="Ask me anything (/ for commands, @ to mention)"
-          className="max-h-40 min-h-10 w-full resize-none bg-transparent px-4 py-2 text-sm outline-none placeholder:text-muted-foreground"
-          rows={1}
-        />
-
-        <div className="flex items-center justify-between px-2 pb-2">
-          {/* Model & settings selector */}
-          <div>
-            <button
-              ref={modelButtonRef}
-              type="button"
-              onClick={() => setModelPickerOpen((v) => !v)}
-              className="flex items-center gap-1.5 rounded-md px-2 py-1 text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <span>
-                {selectedModel === "haiku" ? "Fast" : "Default"}
-              </span>
-              <ChevronDownIcon className="size-3" />
-            </button>
-          </div>
-
-          {isStreaming ? (
-            <TooltipIconButton
-              tooltip="Stop"
-              side="top"
-              variant="secondary"
-              size="icon"
-              className="size-8 rounded-full"
-              onClick={cancelExecution}
-            >
-              <SquareIcon className="size-3 fill-current" />
-            </TooltipIconButton>
-          ) : (
-            <TooltipIconButton
-              tooltip="Send"
-              side="top"
-              variant="default"
-              size="icon"
-              className="size-8 rounded-full"
-              onClick={() => {
-                void handleSend();
-              }}
-              disabled={!input.trim()}
-            >
-              <ArrowUpIcon className="size-4" />
-            </TooltipIconButton>
-          )}
         </div>
       </div>
     </div>
