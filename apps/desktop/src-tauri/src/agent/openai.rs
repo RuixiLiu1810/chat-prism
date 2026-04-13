@@ -365,29 +365,70 @@ async fn stream_response_once(
         .build()
         .map_err(|err| format!("Failed to build HTTP client: {}", err))?;
     let url = format!("{}/responses", config.base_url);
-    let response = client
-        .post(url)
-        .bearer_auth(&config.api_key)
-        .header("Accept", "text/event-stream")
-        .header("Content-Type", "application/json")
-        .body(body.to_string())
-        .send()
-        .await
-        .map_err(|err| format!("OpenAI request failed: {}", err))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        let preview = if body.len() > 400 {
-            format!("{}...", &body[..400])
-        } else {
-            body
-        };
-        return Err(format!(
-            "OpenAI Responses request failed with status {}: {}",
-            status, preview
-        ));
-    }
+    const MAX_RETRIES: u32 = 3;
+    let mut response = {
+        let mut attempt = 0u32;
+        loop {
+            let resp = client
+                .post(&url)
+                .bearer_auth(&config.api_key)
+                .header("Accept", "text/event-stream")
+                .header("Content-Type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await
+                .map_err(|err| format!("OpenAI request failed: {}", err))?;
+
+            if resp.status().is_success() {
+                break resp;
+            }
+
+            let status = resp.status();
+            let retryable = matches!(status.as_u16(), 429 | 503);
+            if retryable && attempt < MAX_RETRIES {
+                let backoff_secs = 1u64 << attempt.min(4); // 1s, 2s, 4s
+                emit_status(
+                    Some(window),
+                    &request.tab_id,
+                    "retrying",
+                    &format!(
+                        "Received {} from OpenAI, retrying in {}s (attempt {}/{})...",
+                        status.as_u16(),
+                        backoff_secs,
+                        attempt + 1,
+                        MAX_RETRIES
+                    ),
+                );
+                let sleep_dur = Duration::from_secs(backoff_secs);
+                if let Some(rx) = cancel_rx.as_mut() {
+                    tokio::select! {
+                        _ = tokio::time::sleep(sleep_dur) => {}
+                        changed = rx.changed() => {
+                            if changed.is_err() || *rx.borrow() {
+                                return Err(AGENT_CANCELLED_MESSAGE.to_string());
+                            }
+                        }
+                    }
+                } else {
+                    tokio::time::sleep(sleep_dur).await;
+                }
+                attempt += 1;
+                continue;
+            }
+
+            let resp_body = resp.text().await.unwrap_or_default();
+            let preview = if resp_body.len() > 400 {
+                format!("{}...", &resp_body[..400])
+            } else {
+                resp_body
+            };
+            return Err(format!(
+                "OpenAI Responses request failed with status {}: {}",
+                status, preview
+            ));
+        }
+    };
 
     emit_status(
         Some(window),
@@ -395,8 +436,6 @@ async fn stream_response_once(
         "streaming",
         "Connected to OpenAI Responses API.",
     );
-
-    let mut response = response;
     let mut buffer = String::new();
     let mut final_response_id = None;
     let mut tool_calls = Vec::new();

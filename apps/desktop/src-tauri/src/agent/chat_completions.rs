@@ -605,37 +605,79 @@ async fn stream_chat_completions_response_once(
         .build()
         .map_err(|err| format!("Failed to build HTTP client: {}", err))?;
     let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
-    let response = client
-        .post(url)
-        .bearer_auth(api_key)
-        .header("Accept", "text/event-stream")
-        .header("Content-Type", "application/json")
-        .body(body.to_string())
-        .send()
-        .await
-        .map_err(|err| {
-            format!(
-                "{} request failed: {}",
-                provider_display_name(provider),
-                err
-            )
-        })?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        let preview = if body.len() > 500 {
-            format!("{}...", &body[..500])
-        } else {
-            body
-        };
-        return Err(format!(
-            "{} request failed with status {}: {}",
-            provider_display_name(provider),
-            status,
-            preview
-        ));
-    }
+    const MAX_RETRIES: u32 = 3;
+    let mut response = {
+        let mut attempt = 0u32;
+        loop {
+            let resp = client
+                .post(&url)
+                .bearer_auth(api_key)
+                .header("Accept", "text/event-stream")
+                .header("Content-Type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await
+                .map_err(|err| {
+                    format!(
+                        "{} request failed: {}",
+                        provider_display_name(provider),
+                        err
+                    )
+                })?;
+
+            if resp.status().is_success() {
+                break resp;
+            }
+
+            let status = resp.status();
+            let retryable = matches!(status.as_u16(), 429 | 503);
+            if retryable && attempt < MAX_RETRIES {
+                let backoff_secs = 1u64 << attempt.min(4); // 1s, 2s, 4s
+                emit_status(
+                    window,
+                    &request.tab_id,
+                    "retrying",
+                    &format!(
+                        "Received {} from {}, retrying in {}s (attempt {}/{})...",
+                        status.as_u16(),
+                        provider_display_name(provider),
+                        backoff_secs,
+                        attempt + 1,
+                        MAX_RETRIES
+                    ),
+                );
+                let sleep_dur = Duration::from_secs(backoff_secs);
+                if let Some(rx) = cancel_rx.as_mut() {
+                    tokio::select! {
+                        _ = tokio::time::sleep(sleep_dur) => {}
+                        changed = rx.changed() => {
+                            if changed.is_err() || *rx.borrow() {
+                                return Err(AGENT_CANCELLED_MESSAGE.to_string());
+                            }
+                        }
+                    }
+                } else {
+                    tokio::time::sleep(sleep_dur).await;
+                }
+                attempt += 1;
+                continue;
+            }
+
+            let resp_body = resp.text().await.unwrap_or_default();
+            let preview = if resp_body.len() > 500 {
+                format!("{}...", &resp_body[..500])
+            } else {
+                resp_body
+            };
+            return Err(format!(
+                "{} request failed with status {}: {}",
+                provider_display_name(provider),
+                status,
+                preview
+            ));
+        }
+    };
 
     emit_status(
         window,
@@ -643,8 +685,6 @@ async fn stream_chat_completions_response_once(
         "streaming",
         &format!("Connected to {}.", provider_display_name(provider)),
     );
-
-    let mut response = response;
     let mut buffer = String::new();
     let mut assistant_content = String::new();
     let mut reasoning_details = Vec::new();
