@@ -1,3 +1,4 @@
+mod adapter;
 mod chat_completions;
 mod document_artifacts;
 mod events;
