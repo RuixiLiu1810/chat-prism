@@ -1600,6 +1600,7 @@ pub async fn agent_start_turn(
         turn_profile,
     };
     ensure_no_pending_workflow_checkpoint(&state, &tab_id, None).await?;
+    state.acquire_turn_guard(&tab_id).await?;
 
     emit_agent_event(
         &window,
@@ -1653,9 +1654,11 @@ pub async fn agent_start_turn(
                     "completed"
                 },
             );
+            state.release_turn_guard(&tab_id).await;
             Ok(local_session_id)
         }
         Err(message) => {
+            state.release_turn_guard(&tab_id).await;
             if message == AGENT_CANCELLED_MESSAGE {
                 emit_agent_complete(&window, &tab_id, "cancelled");
                 return Err(message);
@@ -1700,6 +1703,7 @@ pub async fn agent_continue_turn(
     };
     ensure_no_pending_workflow_checkpoint(&state, &tab_id, request.local_session_id.as_deref())
         .await?;
+    state.acquire_turn_guard(&tab_id).await?;
 
     emit_agent_event(
         &window,
@@ -1804,9 +1808,11 @@ pub async fn agent_continue_turn(
                     "completed"
                 },
             );
+            state.release_turn_guard(&tab_id).await;
             Ok(local_session_id)
         }
         Err(message) => {
+            state.release_turn_guard(&tab_id).await;
             if message == AGENT_CANCELLED_MESSAGE {
                 emit_agent_complete(&window, &tab_id, "cancelled");
                 return Err(message);
@@ -1851,6 +1857,7 @@ pub async fn agent_start_workflow(
     };
 
     state.clear_workflow_state(&tab_id, None).await;
+    state.acquire_turn_guard(&tab_id).await?;
     let workflow = match workflow_type {
         AgentWorkflowType::PaperDrafting => {
             AgentWorkflowState::new_paper_drafting(&tab_id, &project_path, model.clone())
@@ -1876,13 +1883,13 @@ pub async fn agent_start_workflow(
     let request = AgentTurnDescriptor {
         project_path,
         prompt,
-        tab_id,
+        tab_id: tab_id.clone(),
         model,
         local_session_id: None,
         previous_response_id: None,
         turn_profile,
     };
-    match workflow_type {
+    let result = match workflow_type {
         AgentWorkflowType::PaperDrafting => {
             run_paper_drafting_workflow_turn(&window, &state, &runtime, request, workflow).await
         }
@@ -1892,7 +1899,9 @@ pub async fn agent_start_workflow(
         AgentWorkflowType::PeerReview => {
             run_peer_review_workflow_turn(&window, &state, &runtime, request, workflow).await
         }
-    }
+    };
+    state.release_turn_guard(&tab_id).await;
+    result
 }
 
 #[tauri::command]
@@ -1918,17 +1927,18 @@ pub async fn agent_continue_workflow(
     workflow.tab_id = tab_id.clone();
     workflow.bind_local_session_id(resolved_local_session_id.as_deref());
     state.upsert_workflow_state(workflow.clone()).await;
+    state.acquire_turn_guard(&tab_id).await?;
 
     let request = AgentTurnDescriptor {
         project_path,
         prompt,
-        tab_id,
+        tab_id: tab_id.clone(),
         model,
         local_session_id: resolved_local_session_id,
         previous_response_id: None,
         turn_profile,
     };
-    match workflow.workflow_type {
+    let result = match workflow.workflow_type {
         AgentWorkflowType::PaperDrafting => {
             run_paper_drafting_workflow_turn(&window, &state, &runtime, request, workflow).await
         }
@@ -1938,7 +1948,9 @@ pub async fn agent_continue_workflow(
         AgentWorkflowType::PeerReview => {
             run_peer_review_workflow_turn(&window, &state, &runtime, request, workflow).await
         }
-    }
+    };
+    state.release_turn_guard(&tab_id).await;
+    result
 }
 
 #[tauri::command]
@@ -2084,6 +2096,7 @@ pub async fn agent_resume_pending_turn(
         return Err("No pending approved turn to resume.".to_string());
     };
     let pending_for_retry = pending.clone();
+    state.acquire_turn_guard(&tab_id).await?;
 
     emit_turn_resumed(
         Some(&window),
@@ -2202,9 +2215,11 @@ pub async fn agent_resume_pending_turn(
                     "completed"
                 },
             );
+            state.release_turn_guard(&tab_id).await;
             Ok(local_session_id)
         }
         Err(message) => {
+            state.release_turn_guard(&tab_id).await;
             state.store_pending_turn(pending_for_retry).await;
             if message == AGENT_CANCELLED_MESSAGE {
                 emit_agent_complete(&window, &tab_id, "cancelled");
