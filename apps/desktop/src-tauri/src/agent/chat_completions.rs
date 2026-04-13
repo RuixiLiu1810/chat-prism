@@ -839,7 +839,7 @@ pub async fn run_turn_loop(
         })
     }
 
-    runtime_state.ensure_storage(&window.app_handle()).await?;
+    super::session::ensure_storage_from_app(&runtime_state, &window.app_handle()).await?;
     let runtime = settings::load_agent_runtime(&window.app_handle(), Some(&request.project_path))?;
     match runtime.provider.as_str() {
         "minimax" | "deepseek" => {}
@@ -1276,7 +1276,7 @@ async fn run_turn_loop_silent(
         })),
     ];
     let resolved_profile = resolve_turn_profile(request);
-    runtime_state.ensure_storage(app).await?;
+    super::session::ensure_storage_from_app(&runtime_state, app).await?;
     let mut instructions =
         agent_instructions_for_request(&runtime_state, request, Some(&runtime)).await;
     let requested_tool_choice = tool_choice_for_task(request, &resolved_profile);

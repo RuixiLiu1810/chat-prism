@@ -1588,7 +1588,7 @@ pub async fn agent_start_turn(
     model: Option<String>,
     turn_profile: Option<AgentTurnProfile>,
 ) -> Result<String, String> {
-    state.ensure_storage(&window.app_handle()).await?;
+    session::ensure_storage_from_app(&state, &window.app_handle()).await?;
     let runtime = selected_provider(&window.app_handle(), Some(&project_path))?;
     let request = AgentTurnDescriptor {
         project_path,
@@ -1687,7 +1687,7 @@ pub async fn agent_continue_turn(
     previous_response_id: Option<String>,
     turn_profile: Option<AgentTurnProfile>,
 ) -> Result<String, String> {
-    state.ensure_storage(&window.app_handle()).await?;
+    session::ensure_storage_from_app(&state, &window.app_handle()).await?;
     let runtime = selected_provider(&window.app_handle(), Some(&project_path))?;
     let request = AgentTurnDescriptor {
         project_path,
@@ -1837,7 +1837,7 @@ pub async fn agent_start_workflow(
     workflow_type: Option<String>,
     turn_profile: Option<AgentTurnProfile>,
 ) -> Result<String, String> {
-    state.ensure_storage(&window.app_handle()).await?;
+    session::ensure_storage_from_app(&state, &window.app_handle()).await?;
     let runtime = selected_provider(&window.app_handle(), Some(&project_path))?;
     let workflow_kind = workflow_type
         .unwrap_or_else(|| "paper_drafting".to_string())
@@ -1906,7 +1906,7 @@ pub async fn agent_continue_workflow(
     local_session_id: Option<String>,
     turn_profile: Option<AgentTurnProfile>,
 ) -> Result<String, String> {
-    state.ensure_storage(&window.app_handle()).await?;
+    session::ensure_storage_from_app(&state, &window.app_handle()).await?;
     let runtime = selected_provider(&window.app_handle(), Some(&project_path))?;
     let Some(mut workflow) = state
         .workflow_state_for(&tab_id, local_session_id.as_deref())
@@ -1950,7 +1950,7 @@ pub async fn agent_checkpoint_action(
     decision: String,
     feedback: Option<String>,
 ) -> Result<(), String> {
-    state.ensure_storage(&window.app_handle()).await?;
+    session::ensure_storage_from_app(&state, &window.app_handle()).await?;
     let Some(mut workflow) = state
         .workflow_state_for(&tab_id, local_session_id.as_deref())
         .await
@@ -2067,7 +2067,7 @@ pub async fn agent_set_tool_approval(
     tool_name: String,
     decision: String,
 ) -> Result<(), String> {
-    state.ensure_storage(&app).await?;
+    session::ensure_storage_from_app(&state, &app).await?;
     state
         .set_tool_approval(&tab_id, &tool_name, &decision)
         .await
@@ -2079,7 +2079,7 @@ pub async fn agent_resume_pending_turn(
     state: State<'_, AgentRuntimeState>,
     tab_id: String,
 ) -> Result<String, String> {
-    state.ensure_storage(&window.app_handle()).await?;
+    session::ensure_storage_from_app(&state, &window.app_handle()).await?;
     let Some(pending) = state.take_pending_turn(&tab_id).await else {
         return Err("No pending approved turn to resume.".to_string());
     };
@@ -2231,7 +2231,7 @@ pub async fn agent_reset_tool_approvals(
     state: State<'_, AgentRuntimeState>,
     tab_id: String,
 ) -> Result<(), String> {
-    state.ensure_storage(&app).await?;
+    session::ensure_storage_from_app(&state, &app).await?;
     state.clear_tool_approvals(&tab_id).await;
     state.clear_pending_turn(&tab_id, None).await;
     state.clear_workflow_state(&tab_id, None).await;
@@ -2244,7 +2244,7 @@ pub async fn agent_list_sessions(
     state: State<'_, AgentRuntimeState>,
     project_path: String,
 ) -> Result<Vec<AgentSessionSummary>, String> {
-    state.ensure_storage(&app).await?;
+    session::ensure_storage_from_app(&state, &app).await?;
     Ok(state
         .list_session_summaries_for_project(&project_path)
         .await)
@@ -2256,7 +2256,7 @@ pub async fn agent_get_session_summary(
     state: State<'_, AgentRuntimeState>,
     local_session_id: String,
 ) -> Result<Option<AgentSessionSummary>, String> {
-    state.ensure_storage(&app).await?;
+    session::ensure_storage_from_app(&state, &app).await?;
     Ok(state.session_summary(&local_session_id).await)
 }
 
@@ -2266,7 +2266,7 @@ pub async fn agent_load_session_history(
     state: State<'_, AgentRuntimeState>,
     local_session_id: String,
 ) -> Result<Vec<serde_json::Value>, String> {
-    state.ensure_storage(&app).await?;
+    session::ensure_storage_from_app(&state, &app).await?;
     let exists = {
         let sessions = state.sessions.lock().await;
         sessions.contains_key(&local_session_id)
@@ -2289,7 +2289,7 @@ pub async fn agent_get_collected_references(
     tab_id: String,
     local_session_id: Option<String>,
 ) -> Result<Vec<CollectedReference>, String> {
-    state.ensure_storage(&app).await?;
+    session::ensure_storage_from_app(&state, &app).await?;
     Ok(state
         .collected_references_for(&tab_id, local_session_id.as_deref())
         .await)
@@ -2307,7 +2307,7 @@ pub async fn agent_update_collected_reference(
     user_notes: Option<String>,
     relevance_tag: Option<String>,
 ) -> Result<(), String> {
-    state.ensure_storage(&app).await?;
+    session::ensure_storage_from_app(&state, &app).await?;
     state
         .update_collected_reference(
             &tab_id,
@@ -2328,7 +2328,7 @@ pub async fn agent_clear_collected_references(
     tab_id: String,
     local_session_id: Option<String>,
 ) -> Result<(), String> {
-    state.ensure_storage(&app).await?;
+    session::ensure_storage_from_app(&state, &app).await?;
     state
         .clear_collected_references(&tab_id, local_session_id.as_deref())
         .await;

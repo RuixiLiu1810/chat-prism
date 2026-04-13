@@ -564,7 +564,7 @@ pub async fn run_turn_loop(
         })
     }
 
-    runtime_state.ensure_storage(&window.app_handle()).await?;
+    super::session::ensure_storage_from_app(&runtime_state, &window.app_handle()).await?;
     let config = OpenAiProvider::from_runtime(&window.app_handle(), Some(&request.project_path))?;
     let mut previous_response_id = request.previous_response_id.clone();
     let mut next_input = json!([
