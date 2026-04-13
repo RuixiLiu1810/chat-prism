@@ -18,20 +18,21 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+agent-core = { path = "../../../crates/agent-core" }
+serde.workspace = true
+serde_json.workspace = true
 serde_yaml = "0.9"
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
+tokio.workspace = true
+futures.workspace = true
 dirs = "5"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest.workspace = true
 hmac = "0.12"
 sha1 = "0.10"
 base64 = "0.22"
 dotenvy = "0.15"
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
-chrono = "0.4"
-uuid = { version = "1", features = ["v4"] }
+chrono.workspace = true
+uuid.workspace = true
 which = "7"
 tectonic = { version = "0.15", default-features = true, features = ["external-harfbuzz"] }
 # NOTE: Building tectonic requires external harfbuzz/graphite2/icu/freetype:
