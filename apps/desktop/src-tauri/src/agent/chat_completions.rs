@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -600,7 +600,10 @@ async fn stream_chat_completions_response_once(
         body["max_tokens"] = json!(max_tokens);
     }
 
-    let client = Client::new();
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|err| format!("Failed to build HTTP client: {}", err))?;
     let url = format!("{}/chat/completions", config.base_url.trim_end_matches('/'));
     let response = client
         .post(url)
@@ -647,6 +650,8 @@ async fn stream_chat_completions_response_once(
     let mut reasoning_details = Vec::new();
     let mut tool_call_builders: BTreeMap<usize, ChatCompletionsToolCallBuilder> = BTreeMap::new();
 
+    const CHUNK_TIMEOUT: Duration = Duration::from_secs(120);
+
     loop {
         let next_chunk = if let Some(cancel_rx) = cancel_rx.as_mut() {
             tokio::select! {
@@ -657,22 +662,36 @@ async fn stream_chat_completions_response_once(
                         Err(_) => return Err(AGENT_CANCELLED_MESSAGE.to_string()),
                     }
                 }
-                chunk = response.chunk() => chunk.map_err(|err| {
+                chunk = tokio::time::timeout(CHUNK_TIMEOUT, response.chunk()) => {
+                    match chunk {
+                        Ok(result) => result.map_err(|err| {
+                            format!(
+                                "{} streaming read failed: {}",
+                                provider_display_name(provider),
+                                err
+                            )
+                        })?,
+                        Err(_) => return Err(format!(
+                            "{} streaming read timed out after 120s",
+                            provider_display_name(provider)
+                        )),
+                    }
+                }
+            }
+        } else {
+            match tokio::time::timeout(CHUNK_TIMEOUT, response.chunk()).await {
+                Ok(result) => result.map_err(|err| {
                     format!(
                         "{} streaming read failed: {}",
                         provider_display_name(provider),
                         err
                     )
-                })?
+                })?,
+                Err(_) => return Err(format!(
+                    "{} streaming read timed out after 120s",
+                    provider_display_name(provider)
+                )),
             }
-        } else {
-            response.chunk().await.map_err(|err| {
-                format!(
-                    "{} streaming read failed: {}",
-                    provider_display_name(provider),
-                    err
-                )
-            })?
         };
 
         let Some(chunk) = next_chunk else {
