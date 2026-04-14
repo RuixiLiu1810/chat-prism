@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use tauri::{Manager, WebviewWindow};
 
 use agent_core::{
-    AgentCompletePayload, AgentEventEnvelope, AgentRuntimeConfig, ConfigProvider, EventSink,
-    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME,
+    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME, AgentCompletePayload, AgentEventEnvelope,
+    AgentRuntimeConfig, ConfigProvider, EventSink,
 };
 
 use crate::settings;
@@ -36,10 +36,7 @@ pub struct TauriConfigProvider<'a> {
 }
 
 impl<'a> ConfigProvider for TauriConfigProvider<'a> {
-    fn load_agent_runtime(
-        &self,
-        project_root: Option<&str>,
-    ) -> Result<AgentRuntimeConfig, String> {
+    fn load_agent_runtime(&self, project_root: Option<&str>) -> Result<AgentRuntimeConfig, String> {
         settings::load_agent_runtime(self.app, project_root)
     }
 

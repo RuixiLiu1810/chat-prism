@@ -1,14 +1,14 @@
 use std::path::PathBuf;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use super::{
-    approval_bucket_for_tool, approval_required_edit_result, build_review_artifact,
-    cancelled_result, error_result, is_cancelled, ok_result, read_existing_file_for_edit,
-    replace_by_anchor, replace_unique_exact, replace_unique_with_trimmed_fallback,
-    resolve_project_path, tool_arg_optional_string, tool_arg_string, AgentRuntimeState,
-    AgentToolResult,
+    AgentRuntimeState, AgentToolResult, approval_bucket_for_tool, approval_required_edit_result,
+    build_review_artifact, cancelled_result, error_result, is_cancelled, ok_result,
+    read_existing_file_for_edit, replace_by_anchor, replace_unique_exact,
+    replace_unique_with_trimmed_fallback, resolve_project_path, tool_arg_optional_string,
+    tool_arg_string,
 };
 
 async fn materialize_reviewable_edit(
@@ -161,30 +161,30 @@ pub(crate) async fn execute_replace_selected_text(
             anchor,
         ) {
             Ok(Some(updated)) => updated,
-            Ok(None) => match replace_unique_exact(
-                &old_content,
-                &expected_selected_text,
-                &replacement_text,
-            ) {
-                Ok(updated) => updated,
-                Err(message) => {
-                    return error_result(
-                        "replace_selected_text",
-                        call_id,
-                        format!(
-                            "Selection anchor did not match the expected text, and fallback exact replacement failed: {}",
-                            message
-                        ),
-                    )
+            Ok(None) => {
+                match replace_unique_exact(&old_content, &expected_selected_text, &replacement_text)
+                {
+                    Ok(updated) => updated,
+                    Err(message) => {
+                        return error_result(
+                            "replace_selected_text",
+                            call_id,
+                            format!(
+                                "Selection anchor did not match the expected text, and fallback exact replacement failed: {}",
+                                message
+                            ),
+                        );
+                    }
                 }
-            },
+            }
             Err(message) => return error_result("replace_selected_text", call_id, message),
         },
-        None => match replace_unique_exact(&old_content, &expected_selected_text, &replacement_text)
-        {
-            Ok(updated) => updated,
-            Err(message) => return error_result("replace_selected_text", call_id, message),
-        },
+        None => {
+            match replace_unique_exact(&old_content, &expected_selected_text, &replacement_text) {
+                Ok(updated) => updated,
+                Err(message) => return error_result("replace_selected_text", call_id, message),
+            }
+        }
     };
 
     materialize_reviewable_edit(
@@ -309,7 +309,7 @@ pub(crate) async fn execute_write_file(
                 "write_file",
                 call_id,
                 format!("Failed to read existing {} before write: {}", raw_path, err),
-            )
+            );
         }
     };
 

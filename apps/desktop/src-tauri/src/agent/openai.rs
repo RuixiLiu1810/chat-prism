@@ -1,5 +1,5 @@
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 use tauri::{Manager, WebviewWindow};
@@ -15,16 +15,17 @@ use super::telemetry::{
     document_artifact_miss, document_fallback_used, record_document_question_metrics,
 };
 use super::tools::{
-    default_tool_specs, is_document_tool_name, to_openai_tool_schema, AgentToolCall,
+    AgentToolCall, default_tool_specs, is_document_tool_name, to_openai_tool_schema,
 };
 use super::turn_engine::{
-    emit_error, emit_status, emit_text_delta, execute_tool_calls, should_surface_assistant_text,
-    tool_result_feedback_for_model, tool_result_has_invalid_arguments_error, ToolCallTracker,
-    TurnBudget,
+    ToolCallTracker, TurnBudget, emit_error, emit_status, emit_text_delta, execute_tool_calls,
+    should_surface_assistant_text, tool_result_feedback_for_model,
+    tool_result_has_invalid_arguments_error,
 };
 use super::{
     agent_instructions_for_request, max_rounds_for_task, resolve_turn_profile, tool_choice_for_task,
 };
+use agent_core::EventSink;
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 const AGENT_CANCELLED_MESSAGE: &str = "Agent run cancelled by user.";
@@ -136,18 +137,42 @@ impl OpenAiProvider {
             ));
         }
 
-        if let Some(api_key) = runtime.api_key.filter(|value| !value.trim().is_empty()) {
-            return Ok(OpenAiConfig {
-                api_key,
-                base_url: runtime.base_url.trim_end_matches('/').to_string(),
-                default_model: runtime.model,
-                source: "settings".to_string(),
-                sampling_profiles: Some(runtime.sampling_profiles),
-            });
-        }
-
-        Self::from_env()
+        let env_api_key = std::env::var("OPENAI_API_KEY").ok();
+        merge_runtime_with_api_key(runtime, env_api_key)
     }
+}
+
+fn merge_runtime_with_api_key(
+    runtime: settings::AgentRuntimeConfig,
+    env_api_key: Option<String>,
+) -> Result<OpenAiConfig, String> {
+    let settings_api_key = runtime
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let env_api_key = env_api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let (api_key, source) = if let Some(api_key) = settings_api_key {
+        (api_key, "settings")
+    } else if let Some(api_key) = env_api_key {
+        (api_key, "env")
+    } else {
+        return Err("OPENAI_API_KEY is not set".to_string());
+    };
+
+    Ok(OpenAiConfig {
+        api_key,
+        base_url: runtime.base_url.trim_end_matches('/').to_string(),
+        default_model: runtime.model,
+        source: source.to_string(),
+        sampling_profiles: Some(runtime.sampling_profiles),
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -316,7 +341,7 @@ fn extract_function_call_item(item: &Value) -> Option<AgentToolCall> {
 }
 
 async fn stream_response_once(
-    window: &WebviewWindow,
+    sink: &dyn EventSink,
     config: &OpenAiConfig,
     request: &AgentTurnDescriptor,
     instructions: &str,
@@ -389,7 +414,7 @@ async fn stream_response_once(
             if retryable && attempt < MAX_RETRIES {
                 let backoff_secs = 1u64 << attempt.min(4); // 1s, 2s, 4s
                 emit_status(
-                    Some(window),
+                    sink,
                     &request.tab_id,
                     "retrying",
                     &format!(
@@ -431,7 +456,7 @@ async fn stream_response_once(
     };
 
     emit_status(
-        Some(window),
+        sink,
         &request.tab_id,
         "streaming",
         "Connected to OpenAI Responses API.",
@@ -462,7 +487,9 @@ async fn stream_response_once(
             }
         } else {
             match tokio::time::timeout(CHUNK_TIMEOUT, response.chunk()).await {
-                Ok(result) => result.map_err(|err| format!("OpenAI streaming read failed: {}", err))?,
+                Ok(result) => {
+                    result.map_err(|err| format!("OpenAI streaming read failed: {}", err))?
+                }
                 Err(_) => return Err("OpenAI streaming read timed out after 120s".to_string()),
             }
         };
@@ -481,7 +508,7 @@ async fn stream_response_once(
                 Ok(value) => value,
                 Err(err) => {
                     emit_error(
-                        Some(window),
+                        sink,
                         &request.tab_id,
                         "agent_stream_parse_error",
                         format!("Failed to parse streaming event {}: {}", event_name, err),
@@ -496,17 +523,12 @@ async fn stream_response_once(
 
             match event_name.as_str() {
                 "response.created" => {
-                    emit_status(
-                        Some(window),
-                        &request.tab_id,
-                        "created",
-                        "OpenAI response created.",
-                    );
+                    emit_status(sink, &request.tab_id, "created", "OpenAI response created.");
                 }
                 "response.output_text.delta" => {
                     if let Some(delta) = parsed.get("delta").and_then(Value::as_str) {
                         assistant_text.push_str(delta);
-                        emit_text_delta(Some(window), &request.tab_id, delta);
+                        emit_text_delta(sink, &request.tab_id, delta);
                     }
                 }
                 "response.completed" => {
@@ -521,7 +543,7 @@ async fn stream_response_once(
                         }
                     }
                     emit_status(
-                        Some(window),
+                        sink,
                         &request.tab_id,
                         "completed",
                         "OpenAI response completed.",
@@ -539,7 +561,7 @@ async fn stream_response_once(
                         })
                         .unwrap_or("OpenAI returned an error event.");
                     emit_error(
-                        Some(window),
+                        sink,
                         &request.tab_id,
                         "agent_provider_error",
                         message.to_string(),
@@ -593,6 +615,7 @@ fn make_tool_result_message(call_id: &str, preview: &str, is_error: bool) -> Val
 }
 
 pub async fn run_turn_loop(
+    sink: &dyn EventSink,
     window: &WebviewWindow,
     runtime_state: &AgentRuntimeState,
     request: &AgentTurnDescriptor,
@@ -655,7 +678,7 @@ pub async fn run_turn_loop(
         tracker.current_round = round_idx;
         budget.ensure_round_available(round_idx)?;
         let outcome = stream_response_once(
-            window,
+            sink,
             &config,
             request,
             &instructions,
@@ -714,7 +737,7 @@ pub async fn run_turn_loop(
         }
 
         let executed_calls = execute_tool_calls(
-            Some(window),
+            sink,
             runtime_state,
             request,
             deduped_tool_calls,
@@ -798,7 +821,7 @@ pub async fn run_turn_loop(
             instructions.push_str(TOOL_ARGUMENTS_RETRY_HINT);
             instructions.push('\n');
             emit_status(
-                Some(window),
+                sink,
                 &request.tab_id,
                 "tool_retry_hint",
                 "Tool arguments were invalid. Retrying with strict JSON argument guidance.",
@@ -816,7 +839,7 @@ pub async fn run_turn_loop(
 
         next_input = Value::Array(tool_outputs);
         emit_status(
-            Some(window),
+            sink,
             &request.tab_id,
             "responding_after_tools",
             "Tool results sent back to the model. Continuing...",
@@ -869,10 +892,11 @@ pub async fn cancel_response(app: &tauri::AppHandle, response_id: &str) -> Resul
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_function_call_item, extract_response_id, parse_sse_frame,
-        should_surface_assistant_text,
+        extract_function_call_item, extract_response_id, merge_runtime_with_api_key,
+        parse_sse_frame, should_surface_assistant_text,
     };
     use crate::agent::tools::AgentToolCall;
+    use crate::settings;
     use serde_json::json;
 
     #[test]
@@ -929,5 +953,47 @@ mod tests {
             "Refined paragraph changes...",
             &tool_calls
         ));
+    }
+
+    #[test]
+    fn merge_runtime_with_env_key_preserves_runtime_model_base_url_and_sampling() {
+        let runtime = settings::AgentRuntimeConfig::default_local_agent();
+        let expected_model = runtime.model.clone();
+        let expected_base_url = runtime.base_url.clone();
+        let expected_temp = runtime.sampling_profiles.edit_stable.temperature;
+
+        let merged = merge_runtime_with_api_key(runtime, Some("env-key".to_string())).unwrap();
+
+        assert_eq!(merged.api_key, "env-key");
+        assert_eq!(merged.default_model, expected_model);
+        assert_eq!(merged.base_url, expected_base_url);
+        assert_eq!(
+            merged
+                .sampling_profiles
+                .as_ref()
+                .expect("sampling profiles should be preserved")
+                .edit_stable
+                .temperature,
+            expected_temp
+        );
+        assert_eq!(merged.source, "env");
+    }
+
+    #[test]
+    fn merge_runtime_with_api_key_prefers_settings_key_when_present() {
+        let mut runtime = settings::AgentRuntimeConfig::default_local_agent();
+        runtime.api_key = Some("settings-key".to_string());
+
+        let merged = merge_runtime_with_api_key(runtime, Some("env-key".to_string())).unwrap();
+
+        assert_eq!(merged.api_key, "settings-key");
+        assert_eq!(merged.source, "settings");
+    }
+
+    #[test]
+    fn merge_runtime_with_api_key_errors_when_no_key_is_available() {
+        let runtime = settings::AgentRuntimeConfig::default_local_agent();
+        let err = merge_runtime_with_api_key(runtime, None).unwrap_err();
+        assert!(err.contains("OPENAI_API_KEY"));
     }
 }

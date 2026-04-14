@@ -2,12 +2,12 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::OnceLock;
 
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use super::{
-    cancelled_result, error_result, is_cancelled, ok_result, resolve_project_path,
-    tool_arg_optional_string, tool_arg_optional_usize, tool_arg_string, AgentToolResult,
+    AgentToolResult, cancelled_result, error_result, is_cancelled, ok_result, resolve_project_path,
+    tool_arg_optional_string, tool_arg_optional_usize, tool_arg_string,
 };
 
 pub(crate) async fn execute_draft_section(
@@ -1036,7 +1036,7 @@ fn insert_marker_before_terminal_punctuation(text: &str, marker: &str) -> String
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tempfile::tempdir;
 
     use super::{
@@ -1063,12 +1063,14 @@ mod tests {
 
         assert!(!result.is_error, "{:?}", result.content);
         assert_eq!(result.content["sectionType"], json!("Introduction"));
-        assert!(result
-            .content
-            .get("draft")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .contains("Introduction"));
+        assert!(
+            result
+                .content
+                .get("draft")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .contains("Introduction")
+        );
     }
 
     #[tokio::test]
@@ -1109,9 +1111,11 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert!(!findings.is_empty());
-        assert!(findings
-            .iter()
-            .any(|entry| { entry.get("severity") == Some(&Value::String("major".to_string())) }));
+        assert!(
+            findings.iter().any(|entry| {
+                entry.get("severity") == Some(&Value::String("major".to_string()))
+            })
+        );
     }
 
     #[tokio::test]
@@ -1183,13 +1187,15 @@ mod tests {
         .await;
         assert!(!result.is_error, "{:?}", result.content);
         assert_eq!(result.content["templateId"], json!("review_article"));
-        assert!(result
-            .content
-            .get("revisedOutline")
-            .and_then(Value::as_array)
-            .map(|items| items
-                .iter()
-                .any(|entry| entry.get("templateGuidance").is_some()))
-            .unwrap_or(false));
+        assert!(
+            result
+                .content
+                .get("revisedOutline")
+                .and_then(Value::as_array)
+                .map(|items| items
+                    .iter()
+                    .any(|entry| entry.get("templateGuidance").is_some()))
+                .unwrap_or(false)
+        );
     }
 }

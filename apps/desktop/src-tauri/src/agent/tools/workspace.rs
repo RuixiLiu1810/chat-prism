@@ -1,11 +1,11 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio::sync::watch;
 
 use super::{
-    cancelled_result, command_output_with_cancel, ensure_ripgrep_available, error_result,
-    files_preview, is_cancelled, is_document_resource_path, ok_result, resolve_project_path,
-    tool_arg_optional_string, tool_arg_string, truncate_file_bytes, AgentToolResult,
+    AgentToolResult, cancelled_result, command_output_with_cancel, ensure_ripgrep_available,
+    error_result, files_preview, is_cancelled, is_document_resource_path, ok_result,
+    resolve_project_path, tool_arg_optional_string, tool_arg_string, truncate_file_bytes,
 };
 
 pub(crate) async fn execute_read_file(
@@ -45,7 +45,7 @@ pub(crate) async fn execute_read_file(
                 "read_file",
                 call_id,
                 format!("Failed to read {}: {}", raw_path, err),
-            )
+            );
         }
     };
 

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tauri::{Manager, WebviewWindow};
 use tokio::sync::watch;
 
@@ -15,17 +15,19 @@ use super::telemetry::{
     document_artifact_miss, document_fallback_used, record_document_question_metrics,
 };
 use super::tools::{
-    default_tool_specs, is_document_tool_name, to_chat_completions_tool_schema, AgentToolCall,
+    AgentToolCall, default_tool_specs, is_document_tool_name, parse_tool_arguments,
+    to_chat_completions_tool_schema,
 };
 use super::turn_engine::{
-    compact_chat_messages, emit_error, emit_status, emit_text_delta, execute_tool_calls,
-    should_surface_assistant_text, tool_result_feedback_for_model,
-    tool_result_has_invalid_arguments_error, ToolCallTracker, TurnBudget,
+    ToolCallTracker, TurnBudget, compact_chat_messages, emit_error, emit_status, emit_text_delta,
+    execute_tool_calls, should_surface_assistant_text, tool_result_feedback_for_model,
+    tool_result_has_invalid_arguments_error,
 };
+use super::{AGENT_CANCELLED_MESSAGE, AgentStatus, AgentTurnDescriptor};
 use super::{
     agent_instructions_for_request, max_rounds_for_task, resolve_turn_profile, tool_choice_for_task,
 };
-use super::{AgentStatus, AgentTurnDescriptor, AGENT_CANCELLED_MESSAGE};
+use agent_core::EventSink;
 
 #[derive(Debug, Clone, Default)]
 struct ChatCompletionsToolCallBuilder {
@@ -248,8 +250,7 @@ fn visible_assistant_message(text: &str, tool_calls: &[AgentToolCall]) -> Value 
         }));
     }
     for call in tool_calls {
-        let parsed_input =
-            serde_json::from_str::<Value>(&call.arguments).unwrap_or_else(|_| json!({}));
+        let parsed_input = parse_tool_arguments(&call.arguments).unwrap_or_else(|_| json!({}));
         content.push(json!({
             "type": "tool_use",
             "id": call.call_id,
@@ -556,7 +557,7 @@ fn validate_transport_runtime(
 }
 
 async fn stream_chat_completions_response_once(
-    window: Option<&WebviewWindow>,
+    sink: &dyn EventSink,
     app: &tauri::AppHandle,
     request: &AgentTurnDescriptor,
     provider: &str,
@@ -635,7 +636,7 @@ async fn stream_chat_completions_response_once(
             if retryable && attempt < MAX_RETRIES {
                 let backoff_secs = 1u64 << attempt.min(4); // 1s, 2s, 4s
                 emit_status(
-                    window,
+                    sink,
                     &request.tab_id,
                     "retrying",
                     &format!(
@@ -680,7 +681,7 @@ async fn stream_chat_completions_response_once(
     };
 
     emit_status(
-        window,
+        sink,
         &request.tab_id,
         "streaming",
         &format!("Connected to {}.", provider_display_name(provider)),
@@ -727,10 +728,12 @@ async fn stream_chat_completions_response_once(
                         err
                     )
                 })?,
-                Err(_) => return Err(format!(
-                    "{} streaming read timed out after 120s",
-                    provider_display_name(provider)
-                )),
+                Err(_) => {
+                    return Err(format!(
+                        "{} streaming read timed out after 120s",
+                        provider_display_name(provider)
+                    ));
+                }
             }
         };
 
@@ -748,7 +751,7 @@ async fn stream_chat_completions_response_once(
                 Ok(value) => value,
                 Err(err) => {
                     emit_error(
-                        window,
+                        sink,
                         &request.tab_id,
                         "agent_stream_parse_error",
                         format!("Failed to parse MiniMax streaming payload: {}", err),
@@ -769,7 +772,7 @@ async fn stream_chat_completions_response_once(
                     let delta_text = merge_stream_fragment(&assistant_content, content_text);
                     assistant_content.push_str(&delta_text);
                     if !delta_text.is_empty() {
-                        emit_text_delta(window, &request.tab_id, &delta_text);
+                        emit_text_delta(sink, &request.tab_id, &delta_text);
                     }
                 }
 
@@ -811,7 +814,7 @@ async fn stream_chat_completions_response_once(
             if let Some(finish_reason) = choice.get("finish_reason").and_then(Value::as_str) {
                 if matches!(finish_reason, "stop" | "tool_calls") {
                     emit_status(
-                        window,
+                        sink,
                         &request.tab_id,
                         "completed",
                         &format!("{} response completed.", provider_display_name(provider)),
@@ -877,6 +880,7 @@ fn raw_assistant_message(payload: &ChatCompletionsAssistantMessage) -> Value {
 }
 
 pub async fn run_turn_loop(
+    sink: &dyn EventSink,
     window: &WebviewWindow,
     runtime_state: &AgentRuntimeState,
     request: &AgentTurnDescriptor,
@@ -906,7 +910,7 @@ pub async fn run_turn_loop(
             return Err(format!(
                 "{} cannot be handled by chat_completions runtime.",
                 other
-            ))
+            ));
         }
     }
 
@@ -952,7 +956,7 @@ pub async fn run_turn_loop(
         tracker.current_round = round_idx;
         budget.ensure_round_available(round_idx)?;
         let outcome = stream_chat_completions_response_once(
-            Some(window),
+            sink,
             &window.app_handle(),
             request,
             &runtime.provider,
@@ -1009,7 +1013,7 @@ pub async fn run_turn_loop(
         }
 
         let executed_calls = execute_tool_calls(
-            Some(window),
+            sink,
             runtime_state,
             request,
             outcome.tool_calls,
@@ -1104,14 +1108,14 @@ pub async fn run_turn_loop(
                 "content": TOOL_ARGUMENTS_RETRY_HINT,
             }));
             emit_status(
-                Some(window),
+                sink,
                 &request.tab_id,
                 "tool_retry_hint",
                 "Tool arguments were invalid. Retrying with strict JSON argument guidance.",
             );
         }
         emit_status(
-            Some(window),
+            sink,
             &request.tab_id,
             "responding_after_tools",
             "Tool results sent back to MiniMax. Continuing...",
@@ -1161,7 +1165,7 @@ async fn smoke_text_round(
             return Err(format!(
                 "{} smoke test is not wired yet.",
                 provider_display_name(other)
-            ))
+            ));
         }
     };
 
@@ -1206,7 +1210,7 @@ async fn smoke_tool_round(
             return Err(format!(
                 "{} smoke test is not wired yet.",
                 provider_display_name(other)
-            ))
+            ));
         }
     };
 
@@ -1265,7 +1269,7 @@ async fn smoke_continuation_round(
             return Err(format!(
                 "{} smoke test is not wired yet.",
                 provider_display_name(other)
-            ))
+            ));
         }
     };
 
@@ -1287,7 +1291,7 @@ async fn smoke_continuation_round(
             return Err(format!(
                 "{} smoke test is not wired yet.",
                 provider_display_name(other)
-            ))
+            ));
         }
     };
 
@@ -1315,6 +1319,7 @@ async fn run_turn_loop_silent(
     request: &AgentTurnDescriptor,
     history: &[Value],
 ) -> Result<AgentTurnOutcome, String> {
+    let null_sink = agent_core::NullEventSink;
     let runtime_state = AgentRuntimeState::default();
     let runtime = settings::load_agent_runtime(app, Some(&request.project_path))?;
     match runtime.provider.as_str() {
@@ -1323,7 +1328,7 @@ async fn run_turn_loop_silent(
             return Err(format!(
                 "{} cannot be handled by chat_completions runtime.",
                 other
-            ))
+            ));
         }
     }
 
@@ -1363,7 +1368,7 @@ async fn run_turn_loop_silent(
         tracker.current_round = round_idx;
         budget.ensure_round_available(round_idx)?;
         let outcome = stream_chat_completions_response_once(
-            None,
+            &null_sink,
             app,
             request,
             &runtime.provider,
@@ -1396,8 +1401,14 @@ async fn run_turn_loop_silent(
             tracker.record_call(&call.tool_name, &call.arguments);
         }
 
-        let executed_calls =
-            execute_tool_calls(None, &runtime_state, request, outcome.tool_calls, None).await;
+        let executed_calls = execute_tool_calls(
+            &null_sink,
+            &runtime_state,
+            request,
+            outcome.tool_calls,
+            None,
+        )
+        .await;
         for executed in &executed_calls.executed {
             let result = executed.result.clone();
             if result.content.get("error").and_then(Value::as_str) == Some(AGENT_CANCELLED_MESSAGE)
@@ -1607,10 +1618,12 @@ mod tests {
         let messages = transcript_to_chat_messages(&instructions, &request, &history);
         assert_eq!(messages.len(), 4);
         assert_eq!(messages[0]["role"], "system");
-        assert!(messages[0]["content"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("execution-oriented agent"));
+        assert!(
+            messages[0]["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("execution-oriented agent")
+        );
         assert_eq!(messages[1]["role"], "user");
         assert_eq!(messages[1]["content"], "hello");
         assert_eq!(messages[2]["role"], "assistant");
@@ -1642,10 +1655,12 @@ mod tests {
         let messages = transcript_to_chat_messages(&instructions, &request, &history);
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0]["role"], "system");
-        assert!(messages[0]["content"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("execution-oriented agent"));
+        assert!(
+            messages[0]["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("execution-oriented agent")
+        );
         assert_eq!(messages[1]["role"], "user");
         assert_eq!(messages[1]["content"], "real prompt");
         assert_eq!(messages[2]["role"], "user");

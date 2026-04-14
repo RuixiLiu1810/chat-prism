@@ -1,477 +1,37 @@
 // Re-export pure types and functions from agent-core.
 pub use agent_core::turn_engine::{
-    compact_chat_messages, estimate_messages_tokens, estimate_tokens,
-    request_has_binary_attachment_context, should_surface_assistant_text,
-    tool_result_feedback_for_model, tool_result_has_invalid_arguments_error, tool_result_status,
-    ExecutedToolBatch, ExecutedToolCall, ToolCallTracker, TurnBudget,
+    ExecutedToolBatch, ExecutedToolCall, ToolCallTracker, TurnBudget, compact_chat_messages,
+    estimate_messages_tokens, estimate_tokens, request_has_binary_attachment_context,
+    should_surface_assistant_text, tool_result_feedback_for_model,
+    tool_result_has_invalid_arguments_error, tool_result_status,
+};
+
+// Re-export emit functions from agent-core (EventSink-based).
+use agent_core::EventSink;
+pub use agent_core::{
+    emit_agent_complete, emit_approval_requested, emit_error, emit_review_artifact_ready,
+    emit_status, emit_text_delta, emit_tool_call, emit_tool_interrupt_state, emit_tool_result,
+    emit_tool_resumed, emit_turn_resumed, emit_workflow_checkpoint_approved,
+    emit_workflow_checkpoint_rejected, emit_workflow_checkpoint_requested,
 };
 
 use futures::future::join_all;
-use serde_json::{json, Value};
-use tauri::{Emitter, WebviewWindow};
+use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use super::events::{
-    AgentApprovalRequestedEvent, AgentErrorEvent, AgentEventEnvelope, AgentEventPayload,
-    AgentMessageDeltaEvent, AgentReviewArtifactReadyEvent, AgentStatusEvent, AgentToolCallEvent,
-    AgentToolInterruptEvent, AgentToolInterruptPhase, AgentToolResultEvent, AgentToolResumedEvent,
-    AgentTurnResumedEvent, AgentWorkflowCheckpointApprovedEvent,
-    AgentWorkflowCheckpointRejectedEvent, AgentWorkflowCheckpointRequestedEvent, AGENT_EVENT_NAME,
-};
+use super::events::AgentToolInterruptPhase;
 use super::provider::AgentTurnDescriptor;
 use super::resolve_turn_profile;
 use super::session::{AgentRuntimeState, PendingTurnResume};
-use super::telemetry::{record_tool_execution, ToolExecutionTimer};
+use super::telemetry::{ToolExecutionTimer, record_tool_execution};
 use super::tools::{
-    check_tool_call_policy, execute_tool_call, is_document_tool_name, is_parallel_safe_tool,
-    is_reviewable_edit_tool, summarize_tool_target, tool_result_display_value,
-    tool_result_requires_approval, tool_result_review_ready, AgentToolCall, AgentToolResult,
-    ToolExecutionPolicyContext,
+    AgentToolCall, AgentToolResult, ToolExecutionPolicyContext, check_tool_call_policy,
+    execute_tool_call, is_document_tool_name, is_parallel_safe_tool, is_reviewable_edit_tool,
+    summarize_tool_target, tool_result_display_value, tool_result_requires_approval,
+    tool_result_review_ready,
 };
 
-// ─── WebviewWindow-based Event Emission (Tauri adapter) ─────────────
-// These keep the original Option<&WebviewWindow> signatures. Callers across
-// the Tauri codebase will be migrated to use the agent-core EventSink
-// abstraction in a future phase.
-
-pub fn emit_status(window: Option<&WebviewWindow>, tab_id: &str, stage: &str, message: &str) {
-    if let Some(window) = window {
-        if let Err(err) = window.emit(
-            AGENT_EVENT_NAME,
-            AgentEventEnvelope {
-                tab_id: tab_id.to_string(),
-                payload: AgentEventPayload::Status(AgentStatusEvent {
-                    stage: stage.to_string(),
-                    message: message.to_string(),
-                }),
-            },
-        ) {
-            eprintln!(
-                "[agent][emit] failed to send status event {} for {}: {}",
-                stage, tab_id, err
-            );
-        }
-    }
-}
-
-pub fn emit_error(window: Option<&WebviewWindow>, tab_id: &str, code: &str, message: String) {
-    if let Some(window) = window {
-        if let Err(err) = window.emit(
-            AGENT_EVENT_NAME,
-            AgentEventEnvelope {
-                tab_id: tab_id.to_string(),
-                payload: AgentEventPayload::Error(AgentErrorEvent {
-                    code: code.to_string(),
-                    message,
-                }),
-            },
-        ) {
-            eprintln!(
-                "[agent][emit] failed to send error event {} for {}: {}",
-                code, tab_id, err
-            );
-        }
-    }
-}
-
-pub fn emit_text_delta(window: Option<&WebviewWindow>, tab_id: &str, delta: &str) {
-    if let Some(window) = window {
-        if let Err(err) = window.emit(
-            AGENT_EVENT_NAME,
-            AgentEventEnvelope {
-                tab_id: tab_id.to_string(),
-                payload: AgentEventPayload::MessageDelta(AgentMessageDeltaEvent {
-                    delta: delta.to_string(),
-                }),
-            },
-        ) {
-            eprintln!(
-                "[agent][emit] failed to send delta event for {}: {}",
-                tab_id, err
-            );
-        }
-    }
-}
-
-pub fn emit_tool_call(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    tool_name: &str,
-    call_id: &str,
-    input: Value,
-) {
-    if let Some(window) = window {
-        if let Err(err) = window.emit(
-            AGENT_EVENT_NAME,
-            AgentEventEnvelope {
-                tab_id: tab_id.to_string(),
-                payload: AgentEventPayload::ToolCall(AgentToolCallEvent {
-                    tool_name: tool_name.to_string(),
-                    call_id: call_id.to_string(),
-                    input,
-                }),
-            },
-        ) {
-            eprintln!(
-                "[agent][emit] failed to send tool_call event {} for {}: {}",
-                tool_name, tab_id, err
-            );
-        }
-    }
-}
-
-pub fn emit_tool_result(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    tool_name: &str,
-    call_id: &str,
-    is_error: bool,
-    preview: String,
-    content: Value,
-    display: Value,
-) {
-    if let Some(window) = window {
-        if let Err(err) = window.emit(
-            AGENT_EVENT_NAME,
-            AgentEventEnvelope {
-                tab_id: tab_id.to_string(),
-                payload: AgentEventPayload::ToolResult(AgentToolResultEvent {
-                    tool_name: tool_name.to_string(),
-                    call_id: call_id.to_string(),
-                    is_error,
-                    preview,
-                    content,
-                    display,
-                }),
-            },
-        ) {
-            eprintln!(
-                "[agent][emit] failed to send tool_result event {} for {}: {}",
-                tool_name, tab_id, err
-            );
-        }
-    }
-}
-
-pub fn emit_tool_resumed(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    tool_name: &str,
-    target_path: Option<&str>,
-    message: &str,
-) {
-    if let Some(window) = window {
-        if let Err(err) = window.emit(
-            AGENT_EVENT_NAME,
-            AgentEventEnvelope {
-                tab_id: tab_id.to_string(),
-                payload: AgentEventPayload::ToolResumed(AgentToolResumedEvent {
-                    tool_name: tool_name.to_string(),
-                    target_path: target_path.map(str::to_string),
-                    message: message.to_string(),
-                }),
-            },
-        ) {
-            eprintln!(
-                "[agent][emit] failed to send tool_resumed event {} for {}: {}",
-                tool_name, tab_id, err
-            );
-        }
-        emit_tool_interrupt_state(
-            Some(window),
-            tab_id,
-            AgentToolInterruptPhase::Resumed,
-            Some(tool_name),
-            None,
-            target_path,
-            Some(tool_name),
-            false,
-            false,
-            message,
-        );
-    }
-}
-
-pub fn emit_turn_resumed(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    local_session_id: Option<&str>,
-    message: &str,
-) {
-    if let Some(window) = window {
-        if let Err(err) = window.emit(
-            AGENT_EVENT_NAME,
-            AgentEventEnvelope {
-                tab_id: tab_id.to_string(),
-                payload: AgentEventPayload::TurnResumed(AgentTurnResumedEvent {
-                    local_session_id: local_session_id.map(str::to_string),
-                    message: message.to_string(),
-                }),
-            },
-        ) {
-            eprintln!(
-                "[agent][emit] failed to send turn_resumed event for {}: {}",
-                tab_id, err
-            );
-        }
-        emit_tool_interrupt_state(
-            Some(window),
-            tab_id,
-            AgentToolInterruptPhase::Cleared,
-            None,
-            None,
-            None,
-            None,
-            false,
-            false,
-            message,
-        );
-    }
-}
-
-pub fn emit_workflow_checkpoint_requested(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    workflow_type: &str,
-    stage: &str,
-    message: &str,
-) {
-    let Some(window) = window else {
-        return;
-    };
-    if let Err(err) = window.emit(
-        AGENT_EVENT_NAME,
-        AgentEventEnvelope {
-            tab_id: tab_id.to_string(),
-            payload: AgentEventPayload::WorkflowCheckpointRequested(
-                AgentWorkflowCheckpointRequestedEvent {
-                    workflow_type: workflow_type.to_string(),
-                    stage: stage.to_string(),
-                    message: message.to_string(),
-                },
-            ),
-        },
-    ) {
-        eprintln!(
-            "[agent][emit] failed to send workflow_checkpoint_requested for {}: {}",
-            tab_id, err
-        );
-    }
-}
-
-pub fn emit_workflow_checkpoint_approved(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    workflow_type: &str,
-    from_stage: &str,
-    to_stage: &str,
-    completed: bool,
-    message: &str,
-) {
-    let Some(window) = window else {
-        return;
-    };
-    if let Err(err) = window.emit(
-        AGENT_EVENT_NAME,
-        AgentEventEnvelope {
-            tab_id: tab_id.to_string(),
-            payload: AgentEventPayload::WorkflowCheckpointApproved(
-                AgentWorkflowCheckpointApprovedEvent {
-                    workflow_type: workflow_type.to_string(),
-                    from_stage: from_stage.to_string(),
-                    to_stage: to_stage.to_string(),
-                    completed,
-                    message: message.to_string(),
-                },
-            ),
-        },
-    ) {
-        eprintln!(
-            "[agent][emit] failed to send workflow_checkpoint_approved for {}: {}",
-            tab_id, err
-        );
-    }
-}
-
-pub fn emit_workflow_checkpoint_rejected(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    workflow_type: &str,
-    stage: &str,
-    message: &str,
-) {
-    let Some(window) = window else {
-        return;
-    };
-    if let Err(err) = window.emit(
-        AGENT_EVENT_NAME,
-        AgentEventEnvelope {
-            tab_id: tab_id.to_string(),
-            payload: AgentEventPayload::WorkflowCheckpointRejected(
-                AgentWorkflowCheckpointRejectedEvent {
-                    workflow_type: workflow_type.to_string(),
-                    stage: stage.to_string(),
-                    message: message.to_string(),
-                },
-            ),
-        },
-    ) {
-        eprintln!(
-            "[agent][emit] failed to send workflow_checkpoint_rejected for {}: {}",
-            tab_id, err
-        );
-    }
-}
-
-fn emit_tool_interrupt_state(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    phase: AgentToolInterruptPhase,
-    tool_name: Option<&str>,
-    call_id: Option<&str>,
-    target_path: Option<&str>,
-    approval_tool_name: Option<&str>,
-    review_ready: bool,
-    can_resume: bool,
-    message: &str,
-) {
-    let Some(window) = window else {
-        return;
-    };
-
-    if let Err(err) = window.emit(
-        AGENT_EVENT_NAME,
-        AgentEventEnvelope {
-            tab_id: tab_id.to_string(),
-            payload: AgentEventPayload::ToolInterrupt(AgentToolInterruptEvent {
-                phase,
-                tool_name: tool_name.map(str::to_string),
-                call_id: call_id.map(str::to_string),
-                target_path: target_path.map(str::to_string),
-                approval_tool_name: approval_tool_name.map(str::to_string),
-                review_ready,
-                can_resume,
-                message: message.to_string(),
-            }),
-        },
-    ) {
-        eprintln!(
-            "[agent][emit] failed to send tool_interrupt event for {}: {}",
-            tab_id, err
-        );
-    }
-}
-
-fn emit_approval_requested(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    tool_name: &str,
-    call_id: &str,
-    content: &Value,
-) {
-    let Some(window) = window else {
-        return;
-    };
-    let approval_required = content
-        .get("approvalRequired")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if !approval_required {
-        return;
-    }
-
-    let target_path = content
-        .get("path")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let review_ready = content
-        .get("reviewArtifact")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let message = content
-        .get("reason")
-        .and_then(Value::as_str)
-        .unwrap_or("Tool approval is required.")
-        .to_string();
-
-    if let Err(err) = window.emit(
-        AGENT_EVENT_NAME,
-        AgentEventEnvelope {
-            tab_id: tab_id.to_string(),
-            payload: AgentEventPayload::ApprovalRequested(AgentApprovalRequestedEvent {
-                tool_name: tool_name.to_string(),
-                call_id: call_id.to_string(),
-                target_path,
-                review_ready,
-                message,
-            }),
-        },
-    ) {
-        eprintln!(
-            "[agent][emit] failed to send approval_requested event {} for {}: {}",
-            tool_name, tab_id, err
-        );
-    }
-}
-
-fn emit_review_artifact_ready(
-    window: Option<&WebviewWindow>,
-    tab_id: &str,
-    tool_name: &str,
-    call_id: &str,
-    content: &Value,
-) {
-    let Some(window) = window else {
-        return;
-    };
-
-    let Some(path) = content.get("path").and_then(Value::as_str) else {
-        return;
-    };
-    let review_ready = content
-        .get("reviewArtifact")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if !review_ready {
-        return;
-    }
-
-    let summary = content
-        .get("reviewArtifactPayload")
-        .and_then(Value::as_object)
-        .and_then(|payload| payload.get("summary"))
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .or_else(|| {
-            content
-                .get("summary")
-                .and_then(Value::as_str)
-                .map(str::to_string)
-        });
-    let written = content
-        .get("written")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    if let Err(err) = window.emit(
-        AGENT_EVENT_NAME,
-        AgentEventEnvelope {
-            tab_id: tab_id.to_string(),
-            payload: AgentEventPayload::ReviewArtifactReady(AgentReviewArtifactReadyEvent {
-                tool_name: tool_name.to_string(),
-                call_id: call_id.to_string(),
-                target_path: path.to_string(),
-                summary,
-                written,
-            }),
-        },
-    ) {
-        eprintln!(
-            "[agent][emit] failed to send review_artifact_ready event {} for {}: {}",
-            tool_name, tab_id, err
-        );
-    }
-}
+// ─── Orchestration functions (sink-based) ───────────────────────────
 
 #[derive(Debug, Clone)]
 struct PreparedToolCall {
@@ -481,7 +41,7 @@ struct PreparedToolCall {
 }
 
 async fn prepare_tool_call(
-    window: Option<&WebviewWindow>,
+    sink: &dyn EventSink,
     runtime_state: &AgentRuntimeState,
     request: &AgentTurnDescriptor,
     call: AgentToolCall,
@@ -502,21 +62,21 @@ async fn prepare_tool_call(
             .map(|value| format!(" for {}", value))
             .unwrap_or_default();
         emit_status(
-            window,
+            sink,
             &request.tab_id,
             "document_read_started",
             &format!("Reading document{}...", target_label),
         );
     } else {
         emit_status(
-            window,
+            sink,
             &request.tab_id,
             "tool_running",
             &format!("Running {}...", call.tool_name),
         );
     }
     emit_tool_call(
-        window,
+        sink,
         &request.tab_id,
         &call.tool_name,
         &call.call_id,
@@ -560,7 +120,7 @@ async fn execute_prepared_tool_call(
 }
 
 async fn handle_tool_result(
-    window: Option<&WebviewWindow>,
+    sink: &dyn EventSink,
     runtime_state: &AgentRuntimeState,
     request: &AgentTurnDescriptor,
     prepared: PreparedToolCall,
@@ -595,7 +155,7 @@ async fn handle_tool_result(
         .await;
 
     emit_tool_result(
-        window,
+        sink,
         &request.tab_id,
         &result.tool_name,
         &result.call_id,
@@ -607,14 +167,14 @@ async fn handle_tool_result(
     let approval_required = tool_result_requires_approval(&result);
     let review_ready = tool_result_review_ready(&result);
     emit_review_artifact_ready(
-        window,
+        sink,
         &request.tab_id,
         &result.tool_name,
         &result.call_id,
         &result.content,
     );
     emit_approval_requested(
-        window,
+        sink,
         &request.tab_id,
         &result.tool_name,
         &result.call_id,
@@ -633,7 +193,7 @@ async fn handle_tool_result(
             .or_else(|| result.content.get("summary").and_then(Value::as_str))
             .unwrap_or("Tool approval is required.");
         emit_tool_interrupt_state(
-            window,
+            sink,
             &request.tab_id,
             if review_ready {
                 AgentToolInterruptPhase::ReviewReady
@@ -720,14 +280,14 @@ async fn handle_tool_result(
                 .and_then(Value::as_str)
                 .unwrap_or("document read failed");
             emit_status(
-                window,
+                sink,
                 &request.tab_id,
                 "document_read_failed",
                 &format!("Document read failed{}: {}", target_label, reason),
             );
         } else {
             emit_status(
-                window,
+                sink,
                 &request.tab_id,
                 "document_read_ready",
                 &format!("Document read ready{}.", target_label),
@@ -735,7 +295,7 @@ async fn handle_tool_result(
         }
     } else {
         let (stage, message) = tool_result_status(&result.tool_name, &result.content);
-        emit_status(window, &request.tab_id, stage, &message);
+        emit_status(sink, &request.tab_id, stage, &message);
     }
     record_tool_execution(
         runtime_state,
@@ -750,7 +310,7 @@ async fn handle_tool_result(
 }
 
 pub async fn execute_tool_calls(
-    window: Option<&WebviewWindow>,
+    sink: &dyn EventSink,
     runtime_state: &AgentRuntimeState,
     request: &AgentTurnDescriptor,
     tool_calls: Vec<AgentToolCall>,
@@ -776,7 +336,7 @@ pub async fn execute_tool_calls(
 
         let mut prepared_calls = Vec::with_capacity(batch.len());
         for call in batch {
-            prepared_calls.push(prepare_tool_call(window, runtime_state, request, call).await);
+            prepared_calls.push(prepare_tool_call(sink, runtime_state, request, call).await);
         }
 
         let batch_results = if parallel_batch && prepared_calls.len() > 1 {
@@ -809,8 +369,7 @@ pub async fn execute_tool_calls(
 
         for (prepared, result) in batch_results {
             let approval_required = tool_result_requires_approval(&result);
-            executed
-                .push(handle_tool_result(window, runtime_state, request, prepared, result).await);
+            executed.push(handle_tool_result(sink, runtime_state, request, prepared, result).await);
             if approval_required {
                 suspended = true;
                 break;
@@ -856,10 +415,7 @@ mod compaction_tests {
 
     #[test]
     fn no_compaction_when_under_limit() {
-        let mut messages = vec![
-            make_system("system prompt"),
-            make_user("hello"),
-        ];
+        let mut messages = vec![make_system("system prompt"), make_user("hello")];
         let before_len = messages.len();
         compact_chat_messages(&mut messages);
         assert_eq!(messages.len(), before_len);
@@ -916,7 +472,10 @@ mod compaction_tests {
         if messages.len() > 2 {
             let after_summary = &messages[2];
             let role = after_summary["role"].as_str().unwrap_or("");
-            assert_ne!(role, "tool", "tool message should not follow compaction summary");
+            assert_ne!(
+                role, "tool",
+                "tool message should not follow compaction summary"
+            );
         }
     }
 
@@ -934,10 +493,7 @@ mod compaction_tests {
 
     #[test]
     fn estimate_messages_tokens_sums_correctly() {
-        let messages = vec![
-            make_system("hello"),
-            make_user("world"),
-        ];
+        let messages = vec![make_system("hello"), make_user("world")];
         let total = estimate_messages_tokens(&messages);
         // Each: 4 overhead + estimate_tokens(5 chars) = 4 + 2 = 6
         assert_eq!(total, 12);

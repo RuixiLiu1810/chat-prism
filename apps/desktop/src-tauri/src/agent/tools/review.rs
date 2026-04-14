@@ -1,10 +1,10 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use super::{
-    cancelled_result, error_result, is_cancelled, is_document_resource_path,
+    AgentToolResult, cancelled_result, error_result, is_cancelled, is_document_resource_path,
     load_document_runtime_content, ok_result, resolve_project_path, tool_arg_optional_string,
-    tool_arg_string, AgentToolResult,
+    tool_arg_string,
 };
 
 #[derive(Debug, Clone)]

@@ -1,9 +1,9 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use super::{
-    approval_required_result, error_result, ok_result, tool_arg_string, truncate_preview,
     AgentRuntimeState, AgentToolResult, SHELL_COMMAND_TIMEOUT_SECS, SHELL_OUTPUT_MAX_BYTES,
+    approval_required_result, error_result, ok_result, tool_arg_string, truncate_preview,
 };
 use crate::process_utils;
 
@@ -24,39 +24,9 @@ const BLOCKED_SHELL_PATTERNS: &[&str] = &[
 
 /// Academic-safe commands that are allowed when the user has granted shell approval.
 const ALLOWED_SHELL_COMMANDS: &[&str] = &[
-    "pdflatex",
-    "xelatex",
-    "lualatex",
-    "bibtex",
-    "biber",
-    "latexmk",
-    "tectonic",
-    "grep",
-    "rg",
-    "wc",
-    "cat",
-    "head",
-    "tail",
-    "ls",
-    "find",
-    "diff",
-    "echo",
-    "mkdir",
-    "cp",
-    "mv",
-    "touch",
-    "sort",
-    "uniq",
-    "sed",
-    "awk",
-    "python",
-    "python3",
-    "pip",
-    "pip3",
-    "uv",
-    "node",
-    "npm",
-    "npx",
+    "pdflatex", "xelatex", "lualatex", "bibtex", "biber", "latexmk", "tectonic", "grep", "rg",
+    "wc", "cat", "head", "tail", "ls", "find", "diff", "echo", "mkdir", "cp", "mv", "touch",
+    "sort", "uniq", "sed", "awk", "python", "python3", "pip", "pip3", "uv", "node", "npm", "npx",
     "git",
 ];
 

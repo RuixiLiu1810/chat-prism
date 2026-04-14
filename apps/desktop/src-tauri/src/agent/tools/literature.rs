@@ -1,15 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::watch;
 
 use super::{
-    cancelled_result, error_result, is_cancelled, is_document_resource_path,
-    load_document_runtime_content, ok_result, tool_arg_optional_string, tool_arg_optional_usize,
-    tool_arg_string, AgentToolResult, DocumentRuntimeContent,
+    AgentToolResult, DocumentRuntimeContent, cancelled_result, error_result, is_cancelled,
+    is_document_resource_path, load_document_runtime_content, ok_result, tool_arg_optional_string,
+    tool_arg_optional_usize, tool_arg_string,
 };
 use crate::citation::{
-    search_literature_for_agent, AgentLiteratureSearchOptions, CitationCandidate,
+    AgentLiteratureSearchOptions, CitationCandidate, search_literature_for_agent,
 };
 
 #[derive(Debug, Clone)]
