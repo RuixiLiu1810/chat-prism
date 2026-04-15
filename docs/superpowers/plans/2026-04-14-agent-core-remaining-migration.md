@@ -24,7 +24,10 @@
   - `cargo build -p agent-core` passes.
   - `cargo test -p agent-core --lib` passes (30 tests).
   - `cargo build -p agent-cli` passes.
-  - `cargo build -p claude-prism-desktop` currently fails in `tectonic` transitive dependency (pre-existing blocker, unrelated to agent extraction logic).
+  - `cargo build -p claude-prism-desktop` is currently blocked by a pre-existing `tectonic` transitive dependency mismatch; this is a desktop-only blocker and not caused by the `agent-core` migration work.
+- Status note:
+  - `agent-core` and `agent-cli` verification gates are passing in the active pipeline.
+  - Desktop validation remains blocked specifically on the `tectonic` mismatch until that dependency issue is resolved.
 - `agent-cli` still contains TODO placeholder and does not run a real turn loop.
 
 ## Scope Check
