@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use tauri::{Manager, WebviewWindow};
 
 use agent_core::{
-    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME, AgentCompletePayload, AgentEventEnvelope,
-    AgentRuntimeConfig, ConfigProvider, EventSink,
+    AgentCompletePayload, AgentEventEnvelope, AgentRuntimeConfig, ConfigProvider, EventSink,
+    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME,
 };
 
 use crate::settings;
@@ -20,11 +20,21 @@ pub struct TauriEventSink<'w> {
 
 impl<'w> EventSink for TauriEventSink<'w> {
     fn emit_event(&self, envelope: &AgentEventEnvelope) {
-        let _ = self.window.emit(AGENT_EVENT_NAME, envelope);
+        if let Err(err) = self.window.emit(AGENT_EVENT_NAME, envelope) {
+            eprintln!(
+                "[agent][tauri] failed to emit {}: {}",
+                AGENT_EVENT_NAME, err
+            );
+        }
     }
 
     fn emit_complete(&self, payload: &AgentCompletePayload) {
-        let _ = self.window.emit(AGENT_COMPLETE_EVENT_NAME, payload);
+        if let Err(err) = self.window.emit(AGENT_COMPLETE_EVENT_NAME, payload) {
+            eprintln!(
+                "[agent][tauri] failed to emit {}: {}",
+                AGENT_COMPLETE_EVENT_NAME, err
+            );
+        }
     }
 }
 
