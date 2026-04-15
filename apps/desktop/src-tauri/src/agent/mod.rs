@@ -19,8 +19,8 @@ use tauri::{Manager, State, WebviewWindow};
 use tokio::sync::watch;
 
 pub use events::{
-    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME, AgentCompletePayload, AgentErrorEvent,
-    AgentEventEnvelope, AgentEventPayload, AgentStatusEvent,
+    AgentCompletePayload, AgentErrorEvent, AgentEventEnvelope, AgentEventPayload, AgentStatusEvent,
+    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME,
 };
 pub use provider::{
     AgentResponseMode, AgentSamplingProfile, AgentSelectionScope, AgentStatus, AgentTaskKind,
@@ -113,11 +113,24 @@ async fn dispatch_run_turn_loop(
     cancel_rx: Option<watch::Receiver<bool>>,
 ) -> Result<openai::AgentTurnOutcome, String> {
     let sink = adapter::TauriEventSink { window };
-    let runtime = selected_provider(&window.app_handle(), Some(&request.project_path))?;
+    let app = window.app_handle();
+    let runtime = selected_provider(&app, Some(&request.project_path))?;
     match runtime.provider.as_str() {
-        "openai" => openai::run_turn_loop(&sink, window, state, request, cancel_rx).await,
+        "openai" => {
+            let config_provider = adapter::TauriConfigProvider { app: &app };
+            openai::run_turn_loop(&sink, &config_provider, state, request, cancel_rx).await
+        }
         "minimax" | "deepseek" => {
-            chat_completions::run_turn_loop(&sink, window, state, request, history, cancel_rx).await
+            let config_provider = adapter::TauriConfigProvider { app: &app };
+            chat_completions::run_turn_loop(
+                &sink,
+                &config_provider,
+                state,
+                request,
+                history,
+                cancel_rx,
+            )
+            .await
         }
         other => Err(format!(
             "Unsupported agent provider in settings: {}.",
