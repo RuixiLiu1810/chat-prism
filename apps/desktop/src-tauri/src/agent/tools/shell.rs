@@ -1,9 +1,9 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::watch;
 
 use super::{
-    AgentRuntimeState, AgentToolResult, SHELL_COMMAND_TIMEOUT_SECS, SHELL_OUTPUT_MAX_BYTES,
     approval_required_result, error_result, ok_result, tool_arg_string, truncate_preview,
+    AgentRuntimeState, AgentToolResult, SHELL_COMMAND_TIMEOUT_SECS, SHELL_OUTPUT_MAX_BYTES,
 };
 use crate::process_utils;
 

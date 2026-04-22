@@ -1,10 +1,10 @@
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::sync::watch;
 
 use super::{
-    AgentToolResult, DocumentArtifact, cancelled_result, error_result, is_cancelled,
-    load_document_runtime_content, ok_result, resolve_project_path, tool_arg_optional_string,
-    tool_arg_optional_usize, tool_arg_string,
+    cancelled_result, error_result, is_cancelled, load_document_runtime_content, ok_result,
+    resolve_project_path, tool_arg_optional_string, tool_arg_optional_usize, tool_arg_string,
+    AgentToolResult, DocumentArtifact,
 };
 use crate::agent::document_artifacts::{
     find_relevant_document_matches, format_document_matches_preview, is_document_resource_path,

@@ -16,20 +16,21 @@
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
-| `crates/agent-cli/src/command_router.rs` | 命令解析、未知命令建议、`/model` 参数化解析 |
-| `crates/agent-cli/src/status_snapshot.rs` | provider/model/project/git/session/output 状态采集 |
-| `crates/agent-cli/src/header_renderer.rs` | 2 行轻量头部渲染与清屏重绘 |
-| `crates/agent-cli/src/main.rs` | REPL 主循环接线、命令执行、状态刷新策略 |
-| `docs/superpowers/specs/2026-04-23-agent-cli-command-system-2-ui-design.md` | 设计规范（已存在） |
-| `docs/superpowers/plans/2026-04-23-agent-cli-command-system-2-ui.md` | 本实施计划 |
+| File                                                                          | Responsibility                                     |
+| ----------------------------------------------------------------------------- | -------------------------------------------------- |
+| `crates/agent-cli/src/command_router.rs`                                    | 命令解析、未知命令建议、`/model` 参数化解析      |
+| `crates/agent-cli/src/status_snapshot.rs`                                   | provider/model/project/git/session/output 状态采集 |
+| `crates/agent-cli/src/header_renderer.rs`                                   | 2 行轻量头部渲染与清屏重绘                         |
+| `crates/agent-cli/src/main.rs`                                              | REPL 主循环接线、命令执行、状态刷新策略            |
+| `docs/superpowers/specs/2026-04-23-agent-cli-command-system-2-ui-design.md` | 设计规范（已存在）                                 |
+| `docs/superpowers/plans/2026-04-23-agent-cli-command-system-2-ui.md`        | 本实施计划                                         |
 
 ---
 
 ### Task 1: 命令路由层（Command Router）
 
 **Files:**
+
 - Create: `crates/agent-cli/src/command_router.rs`
 - Modify: `crates/agent-cli/src/main.rs`
 - Test: `crates/agent-cli/src/command_router.rs`
@@ -39,6 +40,7 @@
 - [ ] 未知命令返回统一格式，并给出候选建议（如 `/commnads -> /commands`）
 
 验证：
+
 - `cargo test -p agent-cli command_router::tests -v`
 
 ---
@@ -46,6 +48,7 @@
 ### Task 2: 状态快照层（Status Snapshot）
 
 **Files:**
+
 - Create: `crates/agent-cli/src/status_snapshot.rs`
 - Modify: `crates/agent-cli/src/main.rs`
 - Test: `crates/agent-cli/src/status_snapshot.rs`
@@ -55,6 +58,7 @@
 - [ ] 字段为空兜底 `<unset>`，不 panic
 
 验证：
+
 - `cargo test -p agent-cli status_snapshot::tests -v`
 
 ---
@@ -62,6 +66,7 @@
 ### Task 3: 轻量头部渲染层（Header Renderer）
 
 **Files:**
+
 - Create: `crates/agent-cli/src/header_renderer.rs`
 - Modify: `crates/agent-cli/src/main.rs`
 - Test: `crates/agent-cli/src/header_renderer.rs`
@@ -71,6 +76,7 @@
 - [ ] 支持 `/clear` 清屏并重绘头部
 
 验证：
+
 - `cargo test -p agent-cli header_renderer::tests -v`
 
 ---
@@ -78,6 +84,7 @@
 ### Task 4: REPL 编排接线（Main Integration）
 
 **Files:**
+
 - Modify: `crates/agent-cli/src/main.rs`
 
 - [ ] 启动时渲染头部（仅 `human` 输出模式）
@@ -87,6 +94,7 @@
 - [ ] `/help` 与 `/commands` 输出统一可读面板
 
 验证：
+
 - `cargo test -p agent-cli -v`
 - `cargo build -p agent-cli`
 
@@ -95,6 +103,7 @@
 ### Task 5: 质量收口
 
 **Files:**
+
 - Modify: `crates/agent-cli/src/main.rs`
 - Modify: related new modules
 
@@ -103,6 +112,7 @@
 - [ ] 保持 `jsonl` 输出模式兼容（不破坏事件流）
 
 验证：
+
 - `cargo clippy -p agent-cli -- -D warnings`
 
 ---

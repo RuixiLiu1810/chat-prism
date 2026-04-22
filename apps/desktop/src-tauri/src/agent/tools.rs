@@ -1,24 +1,26 @@
 use std::path::{Component, Path, PathBuf};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::process::Command;
 use tokio::sync::watch;
 
 use crate::process_utils;
 
 // Type and function re-exports from agent-core (canonical definitions)
+pub use agent_core::tools::{
+    approval_bucket_for_tool, check_tool_call_policy, error_result, is_document_tool_name,
+    is_parallel_safe_tool, is_reviewable_edit_tool, summarize_tool_target, tool_contract,
+    tool_display_kind, tool_result_display_content, tool_result_display_value,
+    tool_result_requires_approval, tool_result_review_ready, truncate_preview,
+};
+pub use agent_core::{
+    default_tool_specs, is_document_resource_path, parse_tool_arguments, resource_kind_from_path,
+    to_chat_completions_tool_schema, to_openai_tool_schema,
+};
 pub use agent_core::{
     AgentToolCall, AgentToolContract, AgentToolResult, AgentToolResultDisplayContent,
     AgentToolSpec, ToolApprovalPolicy, ToolCapabilityClass, ToolExecutionPolicyContext,
     ToolResourceScope, ToolResultShape, ToolReviewPolicy, ToolSuspendBehavior,
-};
-pub use agent_core::{
-    approval_bucket_for_tool, check_tool_call_policy, default_tool_specs, error_result,
-    is_document_resource_path, is_document_tool_name, is_parallel_safe_tool,
-    is_reviewable_edit_tool, parse_tool_arguments, resource_kind_from_path, summarize_tool_target,
-    to_chat_completions_tool_schema, to_openai_tool_schema, tool_contract, tool_display_kind,
-    tool_result_display_content, tool_result_display_value, tool_result_requires_approval,
-    tool_result_review_ready, truncate_preview,
 };
 
 #[path = "tools/document.rs"]
@@ -38,12 +40,12 @@ mod workspace;
 #[path = "tools/writing.rs"]
 mod writing;
 
-use super::AGENT_CANCELLED_MESSAGE;
 use super::document_artifacts::{
-    DocumentArtifact, DocumentArtifactSegment, load_document_artifact,
+    load_document_artifact, DocumentArtifact, DocumentArtifactSegment,
 };
 use super::review_runtime::AgentReviewArtifact;
 use super::session::AgentRuntimeState;
+use super::AGENT_CANCELLED_MESSAGE;
 
 const MAX_FILE_BYTES: usize = 200_000;
 const MAX_LISTED_FILES: usize = 500;
@@ -870,10 +872,11 @@ fn files_preview(prefix: &str, lines: &[String], truncated: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_FILE_BYTES, default_tool_specs, ensure_relative_path, execute_apply_text_patch,
+        default_tool_specs, ensure_relative_path, execute_apply_text_patch,
         execute_read_document_excerpt, execute_read_file, execute_replace_selected_text,
         line_col_to_byte_offset, parse_selection_anchor, parse_tool_arguments, replace_by_anchor,
         replace_unique_exact, replace_unique_with_trimmed_fallback, truncate_file_bytes,
+        MAX_FILE_BYTES,
     };
     use crate::agent::document_artifacts::artifact_path_for;
     use crate::agent::session::AgentRuntimeState;
@@ -984,12 +987,10 @@ mod tests {
         .await;
 
         assert!(result.is_error);
-        assert!(
-            result.content["error"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("document resource")
-        );
+        assert!(result.content["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("document resource"));
     }
 
     #[tokio::test]
