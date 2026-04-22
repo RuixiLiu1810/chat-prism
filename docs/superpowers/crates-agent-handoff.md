@@ -207,8 +207,18 @@
   - `human`（默认，可读流式输出）
   - `jsonl`（兼容机器消费）
 - 交互 provider 路径当前仅支持 chat-completions（`minimax` / `deepseek`）
-- 不支持真实工具执行（fallback executor）
-- 对需要工具的请求会 fail-fast 并提示使用 desktop runtime
+- 支持受限本地工具执行（MVP）：
+  - `read_file`
+  - `list_files`
+  - `search_project`
+  - `run_shell_command`（审批门禁 + 安全拦截）
+- 新增 REPL 审批命令：
+  - `/approve shell once`
+  - `/approve shell session`
+  - `/approve shell deny`
+- 工具能力仍有边界：
+  - 仍不支持 `write_file` / `apply_text_patch` / `replace_selected_text` 等写操作工具
+  - 不支持 pending-turn 恢复命令面（CLI 侧尚未实现 resume 流）
 
 所以“CLI 跑不动编辑任务”是预期行为，不是回归。
 
