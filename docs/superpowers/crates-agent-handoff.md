@@ -195,6 +195,14 @@
 - 支持两种运行方式：
   - `--prompt`：单轮执行后退出
   - 无 `--prompt`：进入 REPL，多轮对话
+- 支持配置初始化与编辑：
+  - 首次运行配置缺失时自动进入全屏向导（provider/model/api_key/base_url/output）
+  - `agent-runtime config init`：强制重新初始化
+  - `agent-runtime config edit`：编辑现有配置
+  - `agent-runtime config show`：展示当前配置（api_key 掩码）
+  - `agent-runtime config path`：展示配置文件路径
+  - REPL 输入 `/config`：就地打开配置编辑向导
+- 配置优先级固定为：`CLI 参数 > 环境变量 > 本地配置文件 > 交互向导`
 - 支持两种输出：
   - `human`（默认，可读流式输出）
   - `jsonl`（兼容机器消费）
