@@ -231,3 +231,148 @@ Interpretation:
 2. Any behavior without evidence is deferred.
 3. Cosmetic changes that do not support behavioral parity are out of scope.
 
+## 13. Visual Fidelity Addendum (External Baseline)
+
+This section defines the **visual behavior contract** for color, background, motion, and icons.
+It is not optional polish. It is part of behavioral parity.
+
+## 13.1 Color System Contract
+
+Evidence:
+
+1. [theme.ts#L4](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/utils/theme.ts#L4)
+2. [theme.ts#L55](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/utils/theme.ts#L55)
+3. [theme.ts#L63](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/utils/theme.ts#L63)
+4. [theme.ts#L115](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/utils/theme.ts#L115)
+5. [theme.ts#L440](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/utils/theme.ts#L440)
+
+Requirements:
+
+1. `agent-cli` must use semantic color roles instead of hard-coded ad-hoc colors.
+2. Minimum required roles for parity:
+   - `text`, `subtle`, `success`, `warning`, `error`
+   - `userMessageBackground`, `userMessageBackgroundHover`
+   - `messageActionsBackground`
+   - `selectionBg`
+   - `claude` + shimmer companion color for spinner row
+3. ANSI fallback profile is mandatory, matching reference intent for low-color terminals.
+
+Implementation note for minimal change:
+
+1. Introduce a lightweight `tui/theme.rs` with role tokens and two runtime palettes:
+   - truecolor profile
+   - ANSI profile
+2. No full theme switch UI is required in this phase.
+
+## 13.2 Background Layering Contract
+
+Evidence:
+
+1. [theme.ts#L163](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/utils/theme.ts#L163)
+2. [theme.ts#L488](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/utils/theme.ts#L488)
+3. [FullscreenLayout.tsx#L31](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/components/FullscreenLayout.tsx#L31)
+4. [FullscreenLayout.tsx#L260](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/components/FullscreenLayout.tsx#L260)
+
+Requirements:
+
+1. UI background must be layered by slot semantics:
+   - transcript layer (`scrollable`)
+   - input/controls layer (`bottom`)
+   - transient overlay layer (`overlay`)
+   - blocking interaction layer (`modal`)
+2. User message blocks and action-selected blocks must be visually distinguishable by background, not just prefix symbols.
+3. Selection highlight must use dedicated `selectionBg` semantics, not inverse-color hacks.
+
+Implementation note for minimal change:
+
+1. Add style-level rendering helpers to transcript lines for `user`, `assistant`, `semantic`, `selected`.
+2. Keep content model unchanged; only style mapping is added.
+
+## 13.3 Motion and Animation Contract
+
+Evidence:
+
+1. [Spinner.tsx#L119](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/components/Spinner.tsx#L119)
+2. [SpinnerAnimationRow.tsx#L72](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/components/Spinner/SpinnerAnimationRow.tsx#L72)
+3. [SpinnerAnimationRow.tsx#L103](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/components/Spinner/SpinnerAnimationRow.tsx#L103)
+4. [SpinnerAnimationRow.tsx#L131](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/components/Spinner/SpinnerAnimationRow.tsx#L131)
+5. [useStalledAnimation.ts#L69](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/components/Spinner/useStalledAnimation.ts#L69)
+
+Requirements:
+
+1. Spinner animation is time-based and frame-driven, not random character swaps.
+2. Reduced-motion mode must disable active animation and use stable static glyphs.
+3. Stalled-state feedback must transition by intensity (or equivalent semantic fallback), not abrupt color flashing.
+4. Transcript rendering must avoid frame-wide flicker by preferring local redraw over full repaint.
+
+Implementation note for minimal change:
+
+1. Add a tiny `AnimationClock` abstraction in `tui`:
+   - active: fixed interval frames
+   - reduced: single static frame
+2. Keep only spinner-row motion in phase 1; do not animate unrelated regions.
+
+## 13.4 Iconography and Glyph Contract
+
+Evidence:
+
+1. [figures.ts#L4](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/constants/figures.ts#L4)
+2. [figures.ts#L9](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/constants/figures.ts#L9)
+3. [figures.ts#L26](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/constants/figures.ts#L26)
+
+Requirements:
+
+1. Use a centralized icon table for all status glyphs; no inline scattered literals.
+2. Keep platform fallback behavior for unsupported glyphs (e.g., circle variant fallback).
+3. Define and freeze first-phase icon roles:
+   - turn marker
+   - running/waiting/completed state markers
+   - fast/action hint marker
+   - direction markers (`up/down`)
+4. Unknown glyph support must gracefully degrade to ASCII-safe alternatives.
+
+Implementation note for minimal change:
+
+1. Add `tui/icons.rs` and route all rendering prefixes through it.
+
+## 13.5 Status Color/Label Consistency
+
+Evidence:
+
+1. [use-tab-status.ts#L21](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/ink/hooks/use-tab-status.ts#L21)
+2. [use-tab-status.ts#L27](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/ink/hooks/use-tab-status.ts#L27)
+3. [use-tab-status.ts#L32](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/ink/hooks/use-tab-status.ts#L32)
+4. [use-tab-status.ts#L37](/Users/liuruixi/Documents/Code/reference/claude-code-main/src/ink/hooks/use-tab-status.ts#L37)
+
+Requirements:
+
+1. Session status labels must remain semantically stable:
+   - `idle`
+   - `busy`
+   - `waiting`
+2. Header status color must follow the same semantic mapping across all UI modes.
+3. If terminal-level tab-status capability is unavailable, the same semantic state must still be visible in header text.
+
+## 14. Visual Test Matrix (Addendum)
+
+## 14.1 Snapshot and Behavior Tests
+
+1. Theme role mapping snapshot test (truecolor/ANSI).
+2. Spinner reduced-motion test (animated vs static frame behavior).
+3. Icon fallback test for non-Unicode-safe environments.
+4. Background contrast test for `user` vs `messageActions` highlighting.
+
+## 14.2 Manual Verification
+
+1. Narrow width terminal: no broken wrapping or phantom line breaks.
+2. Approval suspension flow: no repaint storms, no heading reset.
+3. Scrollback readability: semantic lines remain visually separable.
+
+## 15. Updated Definition of Done (Visual Scope)
+
+In addition to Section 11:
+
+1. Color rendering is role-based and parity-aligned with reference intent.
+2. Background layering matches slot semantics (`scrollable/bottom/overlay/modal`).
+3. Spinner motion follows frame-driven rules with reduced-motion fallback.
+4. Iconography is centralized with platform-safe fallback behavior.
