@@ -224,8 +224,8 @@
 
 ## 10.1 agent-cli TUI Runtime（S3）
 
-- 默认 REPL 在 `--output human` 时进入全屏 TUI。
-- 可用 `--ui-mode classic` 强制回退到经典行式 REPL。
+- 默认 REPL 在 `--output human` 时使用 `classic` 行式 REPL。
+- 仅在显式指定 `--ui-mode tui` 时进入全屏 TUI（实验态）。
 - `--output jsonl` 始终绕过 TUI，保持机器可消费输出。
 - TUI 语义时间线默认使用 `›/●/└`，支持展开 detail。
 - turn 结果为 `suspended` 时保持同一 session，不重建会话上下文。
