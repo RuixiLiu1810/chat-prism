@@ -1,6 +1,6 @@
 # Claude Prism Crates 工作说明（给执行型 Agent）
 
-更新时间：2026-04-15
+更新时间：2026-04-23
 
 ## 1. 目标与范围
 
@@ -221,6 +221,14 @@
   - 不支持 pending-turn 恢复命令面（CLI 侧尚未实现 resume 流）
 
 所以“CLI 跑不动编辑任务”是预期行为，不是回归。
+
+## 10.1 agent-cli TUI Runtime（S3）
+
+- 默认 REPL 在 `--output human` 时进入全屏 TUI。
+- 可用 `--ui-mode classic` 强制回退到经典行式 REPL。
+- `--output jsonl` 始终绕过 TUI，保持机器可消费输出。
+- TUI 语义时间线默认使用 `›/●/└`，支持展开 detail。
+- turn 结果为 `suspended` 时保持同一 session，不重建会话上下文。
 
 ## 11. 与桌面端的接口关系
 
