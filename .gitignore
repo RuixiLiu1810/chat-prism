@@ -106,3 +106,6 @@ claude-code-fork-main/node_modules
 .agents/
 .claude/
 skills-lock.json
+
+# Local git worktrees
+.worktrees/
