@@ -1,0 +1,149 @@
+<h2>Agent CLI UI Kernel Migration</h2>
+<p class="subtitle">先选一个视觉内核基线（仅外观与手感，不改 agent-core 流程）</p>
+
+<style>
+  .grid3 {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+  .vcard {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    background: #0f1218;
+    cursor: pointer;
+  }
+  .vhead {
+    font-size: 13px;
+    letter-spacing: 0.4px;
+    margin-bottom: 8px;
+    color: #dfe7ff;
+  }
+  .mock {
+    border: 1px solid #394253;
+    border-radius: 8px;
+    background: #0b0f15;
+    padding: 8px;
+    min-height: 200px;
+  }
+  .line { height: 8px; border-radius: 999px; background: #2b3240; margin-bottom: 6px; }
+  .line.s { width: 35%; }
+  .line.m { width: 58%; }
+  .line.l { width: 86%; }
+  .header {
+    border: 1px solid #42506a;
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    color: #9fb1d9;
+    font-size: 11px;
+  }
+  .block {
+    border: 1px solid #2f3748;
+    border-radius: 6px;
+    padding: 6px;
+    margin-bottom: 6px;
+  }
+  .tool {
+    border-left: 3px solid #5f82ff;
+    padding-left: 6px;
+    color: #aebeff;
+    font-size: 11px;
+  }
+  .input {
+    border: 1px solid #4f5e7a;
+    border-radius: 6px;
+    padding: 6px 8px;
+    margin-top: 8px;
+    color: #c9d5f0;
+    font-size: 12px;
+  }
+  .caption {
+    margin-top: 8px;
+    font-size: 12px;
+    color: #a8b3c8;
+    line-height: 1.45;
+  }
+  .pill {
+    display: inline-block;
+    font-size: 11px;
+    border: 1px solid #42506a;
+    border-radius: 999px;
+    padding: 1px 8px;
+    color: #9fb1d9;
+    margin-right: 6px;
+    margin-bottom: 6px;
+  }
+  @media (max-width: 1200px) {
+    .grid3 { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="grid3 options">
+  <div class="vcard option" data-choice="A" onclick="toggleSelect(this)">
+    <div class="vhead">A. Streamline（推荐）</div>
+    <div class="mock">
+      <div class="header">provider/model | path | branch* | session | mode</div>
+      <div class="block">
+        <div class="line l"></div>
+        <div class="line m"></div>
+        <div class="tool">semantic: Read src/main.rs（detail 可展开）</div>
+      </div>
+      <div class="block">
+        <div class="line l"></div>
+        <div class="line s"></div>
+      </div>
+      <div class="input">&gt; 输入命令或问题（单行）</div>
+    </div>
+    <p class="caption">非全屏、流式滚动主导。视觉接近 Claude Code 的“连续会话感”，实现成本低。</p>
+    <span class="pill">默认语义结果</span><span class="pill">细节按需展开</span>
+  </div>
+
+  <div class="vcard option" data-choice="B" onclick="toggleSelect(this)">
+    <div class="vhead">B. Split Timeline</div>
+    <div class="mock">
+      <div class="header">provider/model | path | branch | session</div>
+      <div style="display:grid;grid-template-columns:1fr 0.9fr;gap:8px;">
+        <div class="block">
+          <div class="line l"></div>
+          <div class="line m"></div>
+          <div class="line m"></div>
+        </div>
+        <div class="block">
+          <div class="tool">detail panel</div>
+          <div class="line l"></div>
+          <div class="line s"></div>
+        </div>
+      </div>
+      <div class="input">&gt; 输入...</div>
+    </div>
+    <p class="caption">左会话右细节，信息密度高；但终端宽度不足时易拥挤，移动光标和换行处理更复杂。</p>
+    <span class="pill">高信息密度</span><span class="pill">复杂度较高</span>
+  </div>
+
+  <div class="vcard option" data-choice="C" onclick="toggleSelect(this)">
+    <div class="vhead">C. Card Turns</div>
+    <div class="mock">
+      <div class="header">provider/model | status: waiting/busy/idle</div>
+      <div class="block">
+        <div class="line m"></div>
+        <div class="line l"></div>
+      </div>
+      <div class="block">
+        <div class="tool">tool batch #3</div>
+        <div class="line l"></div>
+      </div>
+      <div class="block">
+        <div class="line l"></div>
+      </div>
+      <div class="input">&gt; 输入...</div>
+    </div>
+    <p class="caption">按回合卡片分组，视觉更“产品化”；但对流式输出自然感略差，需额外动画/分段策略。</p>
+    <span class="pill">回合结构清晰</span><span class="pill">流式自然感稍弱</span>
+  </div>
+</div>
+
+<div class="section">
+  <p class="subtitle">请先选一个基线：A / B / C。选完我就给你下一屏（键位手感与展开交互）。</p>
+</div>

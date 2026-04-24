@@ -1,0 +1,46 @@
+<h2>L1 已确定：请选择输入区形态</h2>
+<p class="subtitle">同样是 L1，输入区设计会显著影响“命令行交互手感”和可发现性。</p>
+
+<div class="cards">
+  <div class="card" data-choice="i1" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>I1 · 极简单行输入（最像经典 CLI）</h3>
+      <pre>... transcript ...
+────────────────────────────────────────
+> input...
+</pre>
+      <p>优点：干净、快。缺点：命令可发现性弱，新用户学习成本高。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="i2" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>I2 · 单行输入 + 轻提示栏（推荐）</h3>
+      <pre>... transcript ...
+────────────────────────────────────────
+> input...
+  /help  /commands  /model  /approve
+</pre>
+      <p>优点：保持 CLI 感，同时提高命令可发现性。复杂度低，适合 MVP。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="i3" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>I3 · 多行输入框 + 提示栏</h3>
+      <pre>... transcript ...
+────────────────────────────────────────
+┌──────────────────────────────────────┐
+│ input line 1...                      │
+│ input line 2...                      │
+└──────────────────────────────────────┘
+  /help  /commands  /model  /approve
+</pre>
+      <p>优点：长提示更友好。缺点：更像编辑器，CLI 纯粹感下降，实现复杂度更高。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <p class="subtitle">建议：若目标是快速对标 Claude Code 体验并控制实现风险，先选 <b>I2</b>。</p>
+</div>

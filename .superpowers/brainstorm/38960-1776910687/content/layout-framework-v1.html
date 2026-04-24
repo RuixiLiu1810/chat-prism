@@ -1,0 +1,53 @@
+<h2>布局框架优先：主界面骨架候选</h2>
+<p class="subtitle">都满足你已确认的方向：默认常驻、轻量头部、REPL 嵌入界面、每轮刷新。</p>
+
+<div class="cards">
+  <div class="card" data-choice="l1" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>L1 · 标准三段式（推荐）</h3>
+      <p>顶部轻量状态 + 中部对话滚动区 + 底部输入与提示区。</p>
+      <pre>┌ provider/model | project | git* | session | output ┐
+│                                                     │
+│  › user prompt                                      │
+│  ● assistant reply                                  │
+│  └ system feedback                                  │
+│                                                     │
+├─────────────────────────────────────────────────────┤
+│ > input...   [/help /commands /model /approve]     │
+└─────────────────────────────────────────────────────┘</pre>
+    </div>
+  </div>
+
+  <div class="card" data-choice="l2" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>L2 · 双栏工作台</h3>
+      <p>左侧对话，右侧会话状态（审批队列/工具状态/最近命令）。</p>
+      <pre>┌ top status bar ─────────────────────────────────────┐
+│ left: transcript                 │ right: runtime   │
+│ › /help                          │ waiting: shell   │
+│ ● ...                            │ last tool: rg    │
+│ └ ...                            │ command hints    │
+├─────────────────────────────────────────────────────┤
+│ > input...                                             │
+└─────────────────────────────────────────────────────┘</pre>
+    </div>
+  </div>
+
+  <div class="card" data-choice="l3" onclick="toggleSelect(this)">
+    <div class="card-body">
+      <h3>L3 · 对话极简流</h3>
+      <p>弱化边框与区块，只保留一行状态头和连续对话流。</p>
+      <pre>provider/model · project · git* · session · output
+
+› user prompt
+● assistant reply
+└ tool approval needed
+
+> input...</pre>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <p class="subtitle">建议：如果你要优先对标 Claude Code 的“稳定手感”，优先选 <b>L1</b>；L2 更偏运维/工程控制台风格。</p>
+</div>

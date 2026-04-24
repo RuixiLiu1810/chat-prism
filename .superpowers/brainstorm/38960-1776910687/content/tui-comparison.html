@@ -1,0 +1,57 @@
+<h2>agent-cli TUI 对标参考（当前 vs Claude 风格）</h2>
+<p class="subtitle">目标不是“长得像”，而是建立更稳定的信息层级、对话节奏和会话连续性。</p>
+
+<div class="split">
+  <div class="mockup">
+    <div class="mockup-header">当前（日志感）</div>
+    <div class="mockup-body">
+      <pre>[streaming] Connected...
+[completed] response completed.
+[tool_running] Running run_shell_command...
+[result] approval required
+[turn:suspended]</pre>
+      <p class="subtitle">问题：事件可读性弱，语义层级不稳定，容易“像重开一轮”。</p>
+    </div>
+  </div>
+  <div class="mockup">
+    <div class="mockup-header">Claude 风格（对话感）</div>
+    <div class="mockup-body">
+      <pre>› /help
+└ Help dialog dismissed
+
+› read one file
+● I’ll inspect the folder first.
+└ Waiting for approval: /approve shell once</pre>
+      <p class="subtitle">优势：输入/回复/系统回执三层固定语法，状态不打断会话叙事。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>你希望我们先把哪条主线做到位？</h3>
+  <p class="subtitle">选中后我就按该方向继续出下一轮视觉草案与实现规格。</p>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>对话语法优先</h3>
+      <p>统一前缀体系：<code>› 用户</code>、<code>● 助手</code>、<code>└ 回执</code>，先解决“可读性与手感”。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>状态机优先</h3>
+      <p>先修会话生命周期：<code>suspended</code>、审批、继续执行，确保同轮不中断。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>布局框架优先</h3>
+      <p>先做全屏框架：轻量头部 + 对话区 + 输入区 + 状态行，再逐步替换内容渲染。</p>
+    </div>
+  </div>
+</div>
