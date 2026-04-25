@@ -23,6 +23,25 @@ Assumptions used in this plan:
 - New repo remote: `https://github.com/RuixiLiu1810/prism-agent-cli.git` (replace during execution)
 - Transition branch in prism: `refactor/agent-externalization`
 
+## Execution Status Snapshot (2026-04-26)
+
+Completed in this execution round:
+
+- Task 1: protocol version field + compatibility tests + safety docs.
+- Task 2: history-preserving split to standalone repo completed.
+- Task 3: single-crate skeleton in `prism-agent-cli` completed and pushed.
+- Task 4: `SessionKernel` + suspend/resume flow test completed.
+- Task 5: stable stream-json encoder + protocol contract test completed.
+- Task 6/7: desktop local-agent start/continue/resume/cancel/approval path routed to external runner commands.
+- Task 8: `apps/desktop/src-tauri/src/agent/*` removed; frontend invoke names migrated to `local_agent_external`.
+- Task 9: cross-repo fixture + CI contract workflows added in both repos.
+- Task 10 (baseline): command registry + services layering in standalone repo completed.
+- Task 11: runbook + migration risk register updated.
+
+Current blocker:
+
+- `cargo check -p claude-prism-desktop` still fails due upstream `tectonic` crate ecosystem incompatibility (17 compile errors in registry crate), unrelated to local-agent split refactor.
+
 ---
 
 ## 1. Target File Structure (post-migration)
@@ -725,4 +744,3 @@ Placeholder scan:
 Type consistency check:
 - [x] protocol envelope naming kept stable (`tabId`, `payload.type`)
 - [x] suspend/resume APIs consistently referenced as kernel-level orchestration
-
