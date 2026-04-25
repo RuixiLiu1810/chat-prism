@@ -3,6 +3,7 @@ mod citation;
 mod claude;
 mod history;
 mod latex;
+mod local_agent_external;
 mod process_utils;
 mod settings;
 mod skills;
@@ -328,6 +329,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .manage(claude::ClaudeProcessState::default())
+        .manage(local_agent_external::LocalAgentProcessState::default())
         .manage(agent::AgentRuntimeState::default())
         .manage(latex::LatexCompilerState::default())
         .manage(zotero::ZoteroOAuthState::default())
@@ -367,6 +369,10 @@ pub fn run() {
             claude::load_session_history,
             claude::get_claude_fast_mode,
             claude::set_claude_fast_mode,
+            local_agent_external::execute_local_agent,
+            local_agent_external::continue_local_agent,
+            local_agent_external::resume_local_agent,
+            local_agent_external::cancel_local_agent,
             agent::agent_check_status,
             agent::agent_start_turn,
             agent::agent_continue_turn,
