@@ -81,7 +81,7 @@ pub mod test_util {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{AgentEventPayload, AgentStatusEvent};
+    use crate::events::{AgentEventPayload, AgentStatusEvent, AGENT_PROTOCOL_VERSION};
 
     #[test]
     fn null_sink_does_not_panic() {
@@ -96,6 +96,7 @@ mod tests {
         sink.emit_complete(&AgentCompletePayload {
             tab_id: "t1".to_string(),
             outcome: "done".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
     }
 
@@ -114,6 +115,7 @@ mod tests {
         sink.emit_complete(&AgentCompletePayload {
             tab_id: "t1".to_string(),
             outcome: "success".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
 
         let events = sink.events.lock().unwrap();

@@ -1819,6 +1819,7 @@ pub fn emit_agent_complete(sink: &dyn EventSink, tab_id: &str, outcome: &str) {
     sink.emit_complete(&AgentCompletePayload {
         tab_id: tab_id.to_string(),
         outcome: outcome.to_string(),
+        protocol_version: AGENT_PROTOCOL_VERSION,
     });
 }
 

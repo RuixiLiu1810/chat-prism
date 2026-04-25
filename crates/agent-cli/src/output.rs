@@ -162,7 +162,7 @@ mod tests {
     use super::{HumanEventSink, JsonlEventSink};
     use agent_core::{
         AgentCompletePayload, AgentEventEnvelope, AgentEventPayload, AgentMessageDeltaEvent,
-        AgentStatusEvent, EventSink,
+        AgentStatusEvent, EventSink, AGENT_PROTOCOL_VERSION,
     };
 
     #[test]
@@ -194,6 +194,7 @@ mod tests {
         sink.emit_complete(&AgentCompletePayload {
             tab_id: "t1".to_string(),
             outcome: "completed".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
         let out = sink.take_test_output();
         assert!(out.contains("\"outcome\":\"completed\""));

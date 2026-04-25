@@ -3,6 +3,11 @@ use serde_json::Value;
 
 pub const AGENT_EVENT_NAME: &str = "agent-event";
 pub const AGENT_COMPLETE_EVENT_NAME: &str = "agent-complete";
+pub const AGENT_PROTOCOL_VERSION: u32 = 1;
+
+fn default_agent_protocol_version() -> u32 {
+    AGENT_PROTOCOL_VERSION
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -156,11 +161,14 @@ pub struct AgentErrorEvent {
 pub struct AgentCompletePayload {
     pub tab_id: String,
     pub outcome: String,
+    #[serde(default = "default_agent_protocol_version", alias = "protocol_version")]
+    pub protocol_version: u32,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AgentEventPayload, AgentStatusEvent};
+    use super::{AgentCompletePayload, AgentEventPayload, AgentStatusEvent, AGENT_PROTOCOL_VERSION};
+    use serde_json::json;
 
     #[test]
     fn status_payload_serializes_with_status_tag() {
@@ -174,5 +182,40 @@ mod tests {
         assert_eq!(value["type"], "status");
         assert_eq!(value["stage"], "thinking");
         assert_eq!(value["message"], "Planning next step");
+    }
+
+    #[test]
+    fn status_payload_deserializes_from_protocol_shape() {
+        let value = json!({
+            "type": "status",
+            "stage": "streaming",
+            "message": "Connected"
+        });
+
+        let payload: AgentEventPayload =
+            serde_json::from_value(value).expect("status payload should deserialize");
+
+        match payload {
+            AgentEventPayload::Status(status) => {
+                assert_eq!(status.stage, "streaming");
+                assert_eq!(status.message, "Connected");
+            }
+            other => panic!("expected status payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn complete_payload_defaults_protocol_version_when_missing() {
+        let value = json!({
+            "tabId": "tab-1",
+            "outcome": "completed"
+        });
+
+        let payload: AgentCompletePayload =
+            serde_json::from_value(value).expect("complete payload should deserialize");
+
+        assert_eq!(payload.tab_id, "tab-1");
+        assert_eq!(payload.outcome, "completed");
+        assert_eq!(payload.protocol_version, AGENT_PROTOCOL_VERSION);
     }
 }

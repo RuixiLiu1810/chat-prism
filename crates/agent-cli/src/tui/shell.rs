@@ -791,7 +791,7 @@ pub async fn run_tui_shell(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use agent_core::{AgentMessageDeltaEvent, AgentStatusEvent};
+    use agent_core::{AgentMessageDeltaEvent, AgentStatusEvent, AGENT_PROTOCOL_VERSION};
 
     #[test]
     fn stream_sink_preserves_message_delta_whitespace() {
@@ -886,6 +886,7 @@ mod tests {
         sink.emit_complete(&AgentCompletePayload {
             tab_id: "t1".to_string(),
             outcome: "suspended".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
         assert_eq!(sink.session_status(), UiSessionStatus::WaitingApproval);
         assert_eq!(sink.prompt_prefix(), "› ");
@@ -906,6 +907,7 @@ mod tests {
         sink.emit_complete(&AgentCompletePayload {
             tab_id: "t1".to_string(),
             outcome: "completed".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
         assert_eq!(sink.session_status(), UiSessionStatus::Idle);
         assert_eq!(sink.prompt_prefix(), "› ");
@@ -925,6 +927,7 @@ mod tests {
         sink.emit_complete(&AgentCompletePayload {
             tab_id: "t1".to_string(),
             outcome: "suspended".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
 
         sink.set_status(UiSessionStatus::Idle);
@@ -938,6 +941,7 @@ mod tests {
         sink.emit_complete(&AgentCompletePayload {
             tab_id: "t1".to_string(),
             outcome: "completed".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
 
         let out = sink.take_test_output();

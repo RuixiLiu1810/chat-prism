@@ -1,4 +1,6 @@
-use agent_core::{AgentCompletePayload, AgentEventEnvelope, AgentEventPayload, EventSink};
+use agent_core::{
+    AgentCompletePayload, AgentEventEnvelope, AgentEventPayload, EventSink, AGENT_PROTOCOL_VERSION,
+};
 
 use super::types::ViewUpdate;
 
@@ -143,6 +145,7 @@ mod tests {
         let complete = AgentCompletePayload {
             tab_id: "tab-1".to_string(),
             outcome: "suspended".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         };
         let update = map_complete(&complete).unwrap_or_else(|| panic!("must map"));
         assert_eq!(update, ViewUpdate::TurnOutcome("suspended".to_string()));
@@ -163,6 +166,7 @@ mod tests {
         sink.emit_complete(&AgentCompletePayload {
             tab_id: "tab-1".to_string(),
             outcome: "completed".to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
 
         let first = rx

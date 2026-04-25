@@ -10,7 +10,7 @@ use std::{
 
 use agent_core::{
     AgentCompletePayload, AgentErrorEvent, AgentEventEnvelope, AgentEventPayload, AgentStatusEvent,
-    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME,
+    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME, AGENT_PROTOCOL_VERSION,
 };
 use serde_json::Value;
 use tauri::{Emitter, Manager, WebviewWindow};
@@ -111,6 +111,7 @@ fn parse_agent_output_line(line: &str, fallback_tab_id: &str) -> ParsedAgentLine
         return ParsedAgentLine::Complete(AgentCompletePayload {
             tab_id: resolve_tab_id(&value, fallback_tab_id),
             outcome: outcome.to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         });
     }
 
@@ -160,6 +161,7 @@ fn emit_complete(window: &WebviewWindow, tab_id: &str, outcome: &str) {
         AgentCompletePayload {
             tab_id: tab_id.to_string(),
             outcome: outcome.to_string(),
+            protocol_version: AGENT_PROTOCOL_VERSION,
         },
     );
 }
