@@ -48,6 +48,10 @@ fn process_key(window_label: &str, tab_id: &str) -> String {
     format!("{}:{}", window_label, tab_id)
 }
 
+fn fallback_session_id(tab_id: &str) -> String {
+    format!("external-{}", tab_id)
+}
+
 fn non_empty_str(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -327,10 +331,11 @@ pub async fn execute_local_agent(
     prompt: String,
     tab_id: String,
     model: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let binary = find_agent_runtime_binary()?;
     let cmd = build_local_agent_command(&binary, &project_path, &prompt, &tab_id, model);
-    spawn_local_agent_process(window, cmd, tab_id).await
+    spawn_local_agent_process(window, cmd, tab_id.clone()).await?;
+    Ok(fallback_session_id(&tab_id))
 }
 
 #[tauri::command]
@@ -340,12 +345,13 @@ pub async fn continue_local_agent(
     prompt: String,
     tab_id: String,
     model: Option<String>,
-    _local_session_id: Option<String>,
+    local_session_id: Option<String>,
     _previous_response_id: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let binary = find_agent_runtime_binary()?;
     let cmd = build_local_agent_command(&binary, &project_path, &prompt, &tab_id, model);
-    spawn_local_agent_process(window, cmd, tab_id).await
+    spawn_local_agent_process(window, cmd, tab_id.clone()).await?;
+    Ok(local_session_id.unwrap_or_else(|| fallback_session_id(&tab_id)))
 }
 
 #[tauri::command]
@@ -356,10 +362,11 @@ pub async fn resume_local_agent(
     prompt: String,
     tab_id: String,
     model: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let binary = find_agent_runtime_binary()?;
     let cmd = build_local_agent_command(&binary, &project_path, &prompt, &tab_id, model);
-    spawn_local_agent_process(window, cmd, tab_id).await
+    spawn_local_agent_process(window, cmd, tab_id.clone()).await?;
+    Ok(fallback_session_id(&tab_id))
 }
 
 #[tauri::command]

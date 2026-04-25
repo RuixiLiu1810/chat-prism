@@ -742,6 +742,8 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
           });
         }
       } else {
+        // Migration-first mapping: local runtime calls are routed to external local-agent commands.
+        // Rollback is easy: switch command names back to agent_* here.
         const localSessionId = workflowTypeToRun
           ? canContinueWorkflow
             ? await invoke<string>("agent_continue_workflow", {
@@ -761,7 +763,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
                 turnProfile,
               })
           : sessionId
-            ? await invoke<string>("agent_continue_turn", {
+            ? await invoke<string>("continue_local_agent", {
                 projectPath,
                 prompt,
                 tabId: activeTabId,
@@ -770,7 +772,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
                 previousResponseId: null,
                 turnProfile,
               })
-            : await invoke<string>("agent_start_turn", {
+            : await invoke<string>("execute_local_agent", {
                 projectPath,
                 prompt,
                 tabId: activeTabId,
@@ -820,7 +822,8 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
           tabId: activeTabId,
         });
       } else {
-        await invoke("agent_cancel_turn", {
+        // Migration-first mapping: keep event channel unchanged, only switch command entrypoint.
+        await invoke("cancel_local_agent", {
           tabId: activeTabId,
           responseId: null,
         });
@@ -1003,6 +1006,8 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
           : `Resuming ${toolName}...`,
       }),
     );
+    // Keep resume on in-process path for now; external runner resume semantics
+    // will be switched after pending-turn protocol reaches parity.
     const localSessionId = await invoke<string>("agent_resume_pending_turn", {
       tabId: activeTabId,
     });
