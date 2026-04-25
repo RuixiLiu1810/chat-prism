@@ -388,6 +388,48 @@ pub async fn cancel_local_agent(window: WebviewWindow, tab_id: String) -> Result
     Ok(())
 }
 
+#[tauri::command]
+pub async fn checkpoint_local_agent(
+    window: WebviewWindow,
+    tab_id: String,
+    _local_session_id: Option<String>,
+    decision: String,
+    _feedback: Option<String>,
+) -> Result<(), String> {
+    emit_status(
+        &window,
+        &tab_id,
+        "workflow_checkpoint",
+        format!("Checkpoint decision received: {}", decision),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_local_agent_tool_approval(
+    window: WebviewWindow,
+    tab_id: String,
+    tool_name: String,
+    decision: String,
+) -> Result<(), String> {
+    emit_status(
+        &window,
+        &tab_id,
+        "approval_recorded",
+        format!("{} => {}", tool_name, decision),
+    );
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn reset_local_agent_tool_approvals(
+    window: WebviewWindow,
+    tab_id: String,
+) -> Result<(), String> {
+    emit_status(&window, &tab_id, "approval_reset", "Tool approvals reset.");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_agent_output_line, ParsedAgentLine};

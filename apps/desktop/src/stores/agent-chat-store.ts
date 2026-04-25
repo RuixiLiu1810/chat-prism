@@ -742,43 +742,23 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
           });
         }
       } else {
-        // Migration-first mapping: local runtime calls are routed to external local-agent commands.
-        // Rollback is easy: switch command names back to agent_* here.
-        const localSessionId = workflowTypeToRun
-          ? canContinueWorkflow
-            ? await invoke<string>("agent_continue_workflow", {
-                projectPath,
-                prompt,
-                tabId: activeTabId,
-                model: null,
-                localSessionId: sessionId,
-                turnProfile,
-              })
-            : await invoke<string>("agent_start_workflow", {
-                projectPath,
-                prompt,
-                tabId: activeTabId,
-                model: null,
-                workflowType: workflowTypeToRun,
-                turnProfile,
-              })
-          : sessionId
-            ? await invoke<string>("continue_local_agent", {
-                projectPath,
-                prompt,
-                tabId: activeTabId,
-                model: null,
-                localSessionId: sessionId,
-                previousResponseId: null,
-                turnProfile,
-              })
-            : await invoke<string>("execute_local_agent", {
-                projectPath,
-                prompt,
-                tabId: activeTabId,
-                model: null,
-                turnProfile,
-              });
+        // Local-agent runtime is external-process only.
+        // Workflows stay prompt-driven until external checkpoint protocol is finalized.
+        const localSessionId = sessionId
+          ? await invoke<string>("continue_local_agent", {
+              projectPath,
+              prompt,
+              tabId: activeTabId,
+              model: null,
+              localSessionId: sessionId,
+              previousResponseId: null,
+            })
+          : await invoke<string>("execute_local_agent", {
+              projectPath,
+              prompt,
+              tabId: activeTabId,
+              model: null,
+            });
         if (localSessionId) {
           get()._setSessionId(activeTabId, localSessionId);
           await get().refreshSessionMeta(activeTabId, localSessionId);
@@ -959,7 +939,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
       return;
     }
     const { activeTabId, sessionId } = get();
-    await invoke("agent_checkpoint_action", {
+    await invoke("checkpoint_local_agent", {
       tabId: activeTabId,
       localSessionId: sessionId,
       decision,
@@ -976,7 +956,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
       return;
     }
     const { activeTabId } = get();
-    await invoke("agent_set_tool_approval", {
+    await invoke("set_local_agent_tool_approval", {
       tabId: activeTabId,
       toolName,
       decision,
@@ -992,6 +972,18 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
       return;
     }
     const { activeTabId } = get();
+    const projectPath = useDocumentStore.getState().projectRoot;
+    if (!projectPath) {
+      set((state) =>
+        applyTabUpdate(state, activeTabId, {
+          isStreaming: false,
+          error: "No project open",
+          statusStage: "failed",
+          statusMessage: "No project open",
+        }),
+      );
+      return;
+    }
     const tab = get().tabs.find((entry) => entry.id === activeTabId);
     if (!tab?.pendingApproval || !tab.pendingApproval.canResume) {
       return;
@@ -1006,10 +998,14 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
           : `Resuming ${toolName}...`,
       }),
     );
-    // Keep resume on in-process path for now; external runner resume semantics
-    // will be switched after pending-turn protocol reaches parity.
-    const localSessionId = await invoke<string>("agent_resume_pending_turn", {
+    const sessionId = tab.sessionId ?? `external-${activeTabId}`;
+    const continuationPrompt = `A required approval for ${toolName} has been granted. Resume the suspended task in the current session context. Continue from the blocked tool stage instead of restarting from scratch. Use the minimal next tool action needed.`;
+    const localSessionId = await invoke<string>("resume_local_agent", {
+      projectPath,
+      sessionId,
+      prompt: continuationPrompt,
       tabId: activeTabId,
+      model: null,
     });
     if (localSessionId) {
       get()._setSessionId(activeTabId, localSessionId);
@@ -1023,7 +1019,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
       return;
     }
     const { activeTabId } = get();
-    await invoke("agent_reset_tool_approvals", {
+    await invoke("reset_local_agent_tool_approvals", {
       tabId: activeTabId,
     });
   },
