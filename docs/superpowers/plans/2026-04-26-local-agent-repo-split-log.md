@@ -31,4 +31,19 @@ Task 2 only: history-preserving extraction of local agent crates into standalone
 
 ## Notes
 - No destructive deletion was performed.
-- Task 3+ intentionally not executed.
+- Initial push is still blocked until `RuixiLiu1810/prism-agent-cli` exists on GitHub.
+
+## Follow-up Execution Checkpoint (2026-04-26)
+
+Standalone repo `prism-agent-cli` has continued beyond Task 2 locally:
+
+- `f6606ab` `refactor(repo): bootstrap single-crate runtime skeleton with protocol and suspend/resume tests`
+- `7c56433` `refactor(cli): add command registry and services layer baseline`
+
+Validation completed in standalone repo:
+
+- `cargo test --test smoke_boot -v` passed
+- `cargo test --test suspend_resume_flow -v` passed
+- `cargo test --test protocol_contract -v` passed
+- `cargo test --test command_router -v` passed
+- `cargo check` passed
