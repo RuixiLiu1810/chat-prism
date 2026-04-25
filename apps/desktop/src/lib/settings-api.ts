@@ -178,7 +178,7 @@ export async function agentSmokeTest(
   projectRoot: string,
 ): Promise<AgentSmokeResult> {
   try {
-    return await invoke<AgentSmokeResult>("agent_smoke_test", {
+    return await invoke<AgentSmokeResult>("smoke_test_local_agent", {
       projectPath: projectRoot,
     });
   } catch (err) {

@@ -8,10 +8,6 @@ use std::{
     },
 };
 
-use agent_core::{
-    AgentCompletePayload, AgentErrorEvent, AgentEventEnvelope, AgentEventPayload, AgentStatusEvent,
-    AGENT_COMPLETE_EVENT_NAME, AGENT_EVENT_NAME, AGENT_PROTOCOL_VERSION,
-};
 use serde_json::Value;
 use tauri::{Emitter, Manager, WebviewWindow};
 use tokio::{
@@ -23,14 +19,96 @@ use tokio::{
 #[derive(Clone)]
 pub struct LocalAgentProcessState {
     pub processes: Arc<Mutex<HashMap<String, LocalAgentProcessHandle>>>,
+    pub session_summaries: Arc<Mutex<HashMap<String, LocalAgentSessionSummary>>>,
+    pub session_histories: Arc<Mutex<HashMap<String, Vec<Value>>>>,
 }
 
 impl Default for LocalAgentProcessState {
     fn default() -> Self {
         Self {
             processes: Arc::new(Mutex::new(HashMap::new())),
+            session_summaries: Arc::new(Mutex::new(HashMap::new())),
+            session_histories: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAgentSessionSummary {
+    pub local_session_id: String,
+    pub title: String,
+    pub updated_at: String,
+    pub created_at: String,
+    pub provider: String,
+    pub model: String,
+    pub preview: Option<String>,
+    pub message_count: usize,
+    pub current_objective: Option<String>,
+    pub current_target: Option<String>,
+    pub last_tool_activity: Option<String>,
+    pub pending_state: Option<String>,
+    pub pending_target: Option<String>,
+    pub workflow_type: Option<String>,
+    pub workflow_stage: Option<String>,
+    pub collected_reference_count: Option<usize>,
+    pub review_finding_count: Option<usize>,
+    pub has_revision_tracker: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAgentStatus {
+    pub provider: String,
+    pub display_name: String,
+    pub ready: bool,
+    pub mode: String,
+    pub message: String,
+    pub default_model: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAgentSmokeStep {
+    pub name: String,
+    pub ok: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAgentSmokeResult {
+    pub provider: String,
+    pub runtime_mode: String,
+    pub ok: bool,
+    pub steps: Vec<LocalAgentSmokeStep>,
+}
+
+const AGENT_EVENT_NAME: &str = "agent-event";
+const AGENT_COMPLETE_EVENT_NAME: &str = "agent-complete";
+const AGENT_PROTOCOL_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentEventEnvelope {
+    pub tab_id: String,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCompletePayload {
+    pub tab_id: String,
+    pub outcome: String,
+    #[serde(
+        default = "default_protocol_version",
+        alias = "protocol_version"
+    )]
+    pub protocol_version: u32,
+}
+
+fn default_protocol_version() -> u32 {
+    AGENT_PROTOCOL_VERSION
 }
 
 pub struct LocalAgentProcessHandle {
@@ -50,6 +128,79 @@ fn process_key(window_label: &str, tab_id: &str) -> String {
 
 fn fallback_session_id(tab_id: &str) -> String {
     format!("external-{}", tab_id)
+}
+
+fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+fn title_from_prompt(prompt: &str) -> String {
+    let trimmed = prompt.trim();
+    if trimmed.is_empty() {
+        return "External Session".to_string();
+    }
+    let mut chars = trimmed.chars();
+    let title: String = chars.by_ref().take(64).collect();
+    if chars.next().is_some() {
+        format!("{}...", title)
+    } else {
+        title
+    }
+}
+
+async fn upsert_session_summary(
+    state: &LocalAgentProcessState,
+    local_session_id: &str,
+    prompt: &str,
+    model: Option<&str>,
+) {
+    let timestamp = now_iso();
+    let mut summaries = state.session_summaries.lock().await;
+    let entry = summaries
+        .entry(local_session_id.to_string())
+        .or_insert_with(|| LocalAgentSessionSummary {
+            local_session_id: local_session_id.to_string(),
+            title: title_from_prompt(prompt),
+            updated_at: timestamp.clone(),
+            created_at: timestamp.clone(),
+            provider: "local-agent-external".to_string(),
+            model: model
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .unwrap_or("default-model")
+                .to_string(),
+            preview: None,
+            message_count: 0,
+            current_objective: None,
+            current_target: None,
+            last_tool_activity: None,
+            pending_state: None,
+            pending_target: None,
+            workflow_type: None,
+            workflow_stage: None,
+            collected_reference_count: None,
+            review_finding_count: None,
+            has_revision_tracker: false,
+        });
+    entry.updated_at = timestamp;
+    entry.preview = Some(prompt.trim().to_string());
+    entry.message_count = entry.message_count.saturating_add(1);
+}
+
+async fn append_user_history(
+    state: &LocalAgentProcessState,
+    local_session_id: &str,
+    prompt: &str,
+) {
+    let mut histories = state.session_histories.lock().await;
+    histories
+        .entry(local_session_id.to_string())
+        .or_default()
+        .push(serde_json::json!({
+            "type": "user",
+            "role": "user",
+            "content": prompt,
+        }));
 }
 
 fn non_empty_str(value: Option<&str>) -> Option<String> {
@@ -95,16 +246,11 @@ fn parse_agent_output_line(line: &str, fallback_tab_id: &str) -> ParsedAgentLine
         return ParsedAgentLine::Complete(complete);
     }
 
-    if value.get("payload").is_some() {
-        if let Some(payload_value) = value.get("payload") {
-            if let Ok(payload) = serde_json::from_value::<AgentEventPayload>(payload_value.clone())
-            {
-                return ParsedAgentLine::Event(AgentEventEnvelope {
-                    tab_id: resolve_tab_id(&value, fallback_tab_id),
-                    payload,
-                });
-            }
-        }
+    if let Some(payload_value) = value.get("payload") {
+        return ParsedAgentLine::Event(AgentEventEnvelope {
+            tab_id: resolve_tab_id(&value, fallback_tab_id),
+            payload: payload_value.clone(),
+        });
     }
 
     if let Some(outcome) = value.get("outcome").and_then(Value::as_str) {
@@ -115,10 +261,10 @@ fn parse_agent_output_line(line: &str, fallback_tab_id: &str) -> ParsedAgentLine
         });
     }
 
-    if let Ok(payload) = serde_json::from_value::<AgentEventPayload>(value) {
+    if value.get("type").and_then(Value::as_str).is_some() {
         return ParsedAgentLine::Event(AgentEventEnvelope {
             tab_id: fallback_tab_id.to_string(),
-            payload,
+            payload: value,
         });
     }
 
@@ -134,7 +280,8 @@ fn emit_status(window: &WebviewWindow, tab_id: &str, stage: &str, message: impl 
         window,
         AgentEventEnvelope {
             tab_id: tab_id.to_string(),
-            payload: AgentEventPayload::Status(AgentStatusEvent {
+            payload: serde_json::json!({
+                "type": "status",
                 stage: stage.to_string(),
                 message: message.into(),
             }),
@@ -147,7 +294,8 @@ fn emit_error(window: &WebviewWindow, tab_id: &str, code: &str, message: impl In
         window,
         AgentEventEnvelope {
             tab_id: tab_id.to_string(),
-            payload: AgentEventPayload::Error(AgentErrorEvent {
+            payload: serde_json::json!({
+                "type": "error",
                 code: code.to_string(),
                 message: message.into(),
             }),
@@ -335,9 +483,15 @@ pub async fn execute_local_agent(
     model: Option<String>,
 ) -> Result<String, String> {
     let binary = find_agent_runtime_binary()?;
+    let session_id = fallback_session_id(&tab_id);
+    {
+        let state = window.state::<LocalAgentProcessState>();
+        upsert_session_summary(state.inner(), &session_id, &prompt, model.as_deref()).await;
+        append_user_history(state.inner(), &session_id, &prompt).await;
+    }
     let cmd = build_local_agent_command(&binary, &project_path, &prompt, &tab_id, model);
     spawn_local_agent_process(window, cmd, tab_id.clone()).await?;
-    Ok(fallback_session_id(&tab_id))
+    Ok(session_id)
 }
 
 #[tauri::command]
@@ -351,24 +505,35 @@ pub async fn continue_local_agent(
     _previous_response_id: Option<String>,
 ) -> Result<String, String> {
     let binary = find_agent_runtime_binary()?;
+    let session_id = local_session_id.unwrap_or_else(|| fallback_session_id(&tab_id));
+    {
+        let state = window.state::<LocalAgentProcessState>();
+        upsert_session_summary(state.inner(), &session_id, &prompt, model.as_deref()).await;
+        append_user_history(state.inner(), &session_id, &prompt).await;
+    }
     let cmd = build_local_agent_command(&binary, &project_path, &prompt, &tab_id, model);
     spawn_local_agent_process(window, cmd, tab_id.clone()).await?;
-    Ok(local_session_id.unwrap_or_else(|| fallback_session_id(&tab_id)))
+    Ok(session_id)
 }
 
 #[tauri::command]
 pub async fn resume_local_agent(
     window: WebviewWindow,
     project_path: String,
-    _session_id: String,
+    session_id: String,
     prompt: String,
     tab_id: String,
     model: Option<String>,
 ) -> Result<String, String> {
     let binary = find_agent_runtime_binary()?;
+    {
+        let state = window.state::<LocalAgentProcessState>();
+        upsert_session_summary(state.inner(), &session_id, &prompt, model.as_deref()).await;
+        append_user_history(state.inner(), &session_id, &prompt).await;
+    }
     let cmd = build_local_agent_command(&binary, &project_path, &prompt, &tab_id, model);
     spawn_local_agent_process(window, cmd, tab_id.clone()).await?;
-    Ok(fallback_session_id(&tab_id))
+    Ok(session_id)
 }
 
 #[tauri::command]
@@ -386,6 +551,82 @@ pub async fn cancel_local_agent(window: WebviewWindow, tab_id: String) -> Result
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn check_local_agent_status() -> Result<LocalAgentStatus, String> {
+    let ready = find_agent_runtime_binary().is_ok();
+    Ok(LocalAgentStatus {
+        provider: "local-agent-external".to_string(),
+        display_name: "Local Agent (External)".to_string(),
+        ready,
+        mode: "external_process".to_string(),
+        message: if ready {
+            "External local agent binary is available.".to_string()
+        } else {
+            "External local agent binary is unavailable. Set PRISM_LOCAL_AGENT_BIN or PATH."
+                .to_string()
+        },
+        default_model: None,
+    })
+}
+
+#[tauri::command]
+pub async fn list_local_agent_sessions(
+    state: tauri::State<'_, LocalAgentProcessState>,
+    _project_path: String,
+) -> Result<Vec<LocalAgentSessionSummary>, String> {
+    let summaries = state.session_summaries.lock().await;
+    let mut values: Vec<LocalAgentSessionSummary> = summaries.values().cloned().collect();
+    values.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(values)
+}
+
+#[tauri::command]
+pub async fn get_local_agent_session_summary(
+    state: tauri::State<'_, LocalAgentProcessState>,
+    local_session_id: String,
+) -> Result<Option<LocalAgentSessionSummary>, String> {
+    let summaries = state.session_summaries.lock().await;
+    Ok(summaries.get(&local_session_id).cloned())
+}
+
+#[tauri::command]
+pub async fn load_local_agent_session_history(
+    state: tauri::State<'_, LocalAgentProcessState>,
+    local_session_id: String,
+) -> Result<Vec<Value>, String> {
+    let histories = state.session_histories.lock().await;
+    Ok(histories
+        .get(&local_session_id)
+        .cloned()
+        .unwrap_or_else(Vec::new))
+}
+
+#[tauri::command]
+pub async fn smoke_test_local_agent(project_path: String) -> Result<LocalAgentSmokeResult, String> {
+    let binary = find_agent_runtime_binary();
+    let mut steps = Vec::new();
+    steps.push(LocalAgentSmokeStep {
+        name: "binary_discovery".to_string(),
+        ok: binary.is_ok(),
+        detail: match &binary {
+            Ok(path) => format!("found binary at {}", path.display()),
+            Err(err) => err.clone(),
+        },
+    });
+    steps.push(LocalAgentSmokeStep {
+        name: "project_path".to_string(),
+        ok: std::path::Path::new(&project_path).exists(),
+        detail: format!("project_path={}", project_path),
+    });
+    let ok = steps.iter().all(|step| step.ok);
+    Ok(LocalAgentSmokeResult {
+        provider: "local-agent-external".to_string(),
+        runtime_mode: "external_process".to_string(),
+        ok,
+        steps,
+    })
 }
 
 #[tauri::command]

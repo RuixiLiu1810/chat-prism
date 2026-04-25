@@ -103,9 +103,12 @@ export function SessionSelector() {
           })),
         );
       } else {
-        const result = await invoke<AgentSessionInfo[]>("agent_list_sessions", {
-          projectPath: projectRoot,
-        });
+        const result = await invoke<AgentSessionInfo[]>(
+          "list_local_agent_sessions",
+          {
+            projectPath: projectRoot,
+          },
+        );
         log.debug("loaded local agent sessions", { count: result.length });
         setSessions(result);
       }

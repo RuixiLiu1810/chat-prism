@@ -18,7 +18,6 @@ tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"
-agent-core = { path = "../../../crates/agent-core" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"

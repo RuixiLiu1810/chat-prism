@@ -130,6 +130,35 @@ pub(crate) struct CitationProviderRuntimeConfig {
     pub semantic_scholar_api_key: Option<String>,
 }
 
-pub(crate) use agent_core::{
-    AgentDomainConfig, AgentRuntimeConfig, AgentSamplingConfig, AgentSamplingProfilesConfig,
-};
+#[derive(Debug, Clone)]
+pub(crate) struct AgentSamplingConfig {
+    pub temperature: f64,
+    pub top_p: f64,
+    pub max_tokens: u32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AgentSamplingProfilesConfig {
+    pub edit_stable: AgentSamplingConfig,
+    pub analysis_balanced: AgentSamplingConfig,
+    pub analysis_deep: AgentSamplingConfig,
+    pub chat_flexible: AgentSamplingConfig,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AgentDomainConfig {
+    pub domain: String,
+    pub custom_instructions: Option<String>,
+    pub terminology_strictness: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AgentRuntimeConfig {
+    pub runtime: String,
+    pub provider: String,
+    pub model: String,
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub domain_config: AgentDomainConfig,
+    pub sampling_profiles: AgentSamplingProfilesConfig,
+}

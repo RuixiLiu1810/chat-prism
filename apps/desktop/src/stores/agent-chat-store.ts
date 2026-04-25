@@ -472,7 +472,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
       }
 
       const session = await invoke<LocalAgentSessionSummary | null>(
-        "agent_get_session_summary",
+        "get_local_agent_session_summary",
         {
           localSessionId,
         },
@@ -909,7 +909,7 @@ export const useAgentChatStore = create<AgentChatState>()((set, get) => ({
                 projectPath,
                 sessionId,
               })
-            : await invoke<any[]>("agent_load_session_history", {
+            : await invoke<any[]>("load_local_agent_session_history", {
                 localSessionId: sessionId,
               });
 

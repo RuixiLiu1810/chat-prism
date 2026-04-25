@@ -1,4 +1,3 @@
-mod agent;
 mod citation;
 mod claude;
 mod history;
@@ -330,7 +329,6 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .manage(claude::ClaudeProcessState::default())
         .manage(local_agent_external::LocalAgentProcessState::default())
-        .manage(agent::AgentRuntimeState::default())
         .manage(latex::LatexCompilerState::default())
         .manage(zotero::ZoteroOAuthState::default())
         .setup(|app| {
@@ -373,17 +371,14 @@ pub fn run() {
             local_agent_external::continue_local_agent,
             local_agent_external::resume_local_agent,
             local_agent_external::cancel_local_agent,
+            local_agent_external::check_local_agent_status,
+            local_agent_external::list_local_agent_sessions,
+            local_agent_external::get_local_agent_session_summary,
+            local_agent_external::load_local_agent_session_history,
+            local_agent_external::smoke_test_local_agent,
             local_agent_external::checkpoint_local_agent,
             local_agent_external::set_local_agent_tool_approval,
             local_agent_external::reset_local_agent_tool_approvals,
-            agent::agent_check_status,
-            agent::agent_list_sessions,
-            agent::agent_get_session_summary,
-            agent::agent_load_session_history,
-            agent::agent_get_collected_references,
-            agent::agent_update_collected_reference,
-            agent::agent_clear_collected_references,
-            agent::agent_smoke_test,
             process_utils::run_shell_command,
             citation::citation_search,
             citation::citation_search_debug,

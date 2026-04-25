@@ -56,7 +56,7 @@ export function ProjectPicker() {
   const openProject = useDocumentStore((s) => s.openProject);
 
   useEffect(() => {
-    invoke<AgentRuntimeStatus>("agent_check_status")
+    invoke<AgentRuntimeStatus>("check_local_agent_status")
       .then(setAgentStatus)
       .catch(() => setAgentStatus(null));
     getVersion().then(setAppVersion);
