@@ -25,6 +25,20 @@
   - Migration-first approach: no event pipeline refactor in Task 1.
   - Only schema extension + compatibility tests + compile fixes.
 
+## R5: Cross-Repo Contract Drift (Standalone CLI vs Desktop Parser)
+- Impact: Desktop can start process but fails to map stream lines into `agent-event` / `agent-complete`.
+- Mitigation:
+  - Commit canonical fixture: `tests/fixtures/local-agent-ping.jsonl`.
+  - Add CI guard: `.github/workflows/local-agent-contract.yml`.
+  - Keep parser additive-field tolerant in `local_agent_external.rs`.
+
+## R6: Resume Semantics During Externalization
+- Impact: approval-resume may lose exact in-process continuation context.
+- Mitigation:
+  - Use explicit continuation prompt on `resume_local_agent`.
+  - Keep session metadata/history APIs available while runtime path externalizes.
+  - Record rollout gate for suspend/resume success ratio in cutover runbook.
+
 ## Exit Criteria For Task 1
 - `cargo test -p agent-core events -v` passes.
 - Protocol docs committed.

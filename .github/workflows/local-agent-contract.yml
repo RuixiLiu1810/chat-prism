@@ -1,0 +1,23 @@
+name: local-agent-contract
+
+on:
+  push:
+    branches: ["main", "refactor/**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  validate-local-agent-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate fixture exists
+        run: test -s tests/fixtures/local-agent-ping.jsonl
+
+      - name: Validate status envelope
+        run: head -n 1 tests/fixtures/local-agent-ping.jsonl | jq -e '.payload.type == "status"' >/dev/null
+
+      - name: Validate complete envelope
+        run: tail -n 1 tests/fixtures/local-agent-ping.jsonl | jq -e '.payload.type == "complete"' >/dev/null
